@@ -26,6 +26,31 @@
 
 </div>
 
+## About this repository
+
+This repository (**[Ber1in/tty7](https://github.com/Ber1in/tty7)**) is a personal
+fork of [**l0ng-ai/tty7**](https://github.com/l0ng-ai/tty7), which remains the
+upstream project. tty7 itself is entirely the upstream authors' work — this fork
+only adds its own changes on top.
+
+| | |
+|---|---|
+| **Upstream source** | [github.com/l0ng-ai/tty7](https://github.com/l0ng-ai/tty7) |
+| **Downloads & releases** | [upstream releases](https://github.com/l0ng-ai/tty7/releases) — no builds are published from this fork |
+| **Documentation** | [`docs/`](docs/) here is upstream's, kept in sync |
+| **Issues, Discord, community** | go upstream, unless the problem is specific to a change made in this fork |
+
+Everything below describes tty7 as upstream ships it. The badges above point at
+upstream CI and releases, not at this fork. Local changes here may be ahead of,
+behind, or absent from upstream, and are not endorsed by or merged back into it.
+
+To sync with upstream:
+
+```sh
+git remote add upstream https://github.com/l0ng-ai/tty7.git   # once
+git fetch upstream && git merge upstream/main
+```
+
 ## Why
 
 A background server owns your shells and panes — not the window. Everything

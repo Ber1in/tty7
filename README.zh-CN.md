@@ -26,6 +26,29 @@
 
 </div>
 
+## 关于本仓库
+
+本仓库（**[Ber1in/tty7](https://github.com/Ber1in/tty7)**）是
+[**l0ng-ai/tty7**](https://github.com/l0ng-ai/tty7) 的个人 fork，上游仍是
+l0ng-ai/tty7。tty7 本身完全是上游作者的成果，这个 fork 只是在其之上加了自己的改动。
+
+| | |
+|---|---|
+| **上游源码** | [github.com/l0ng-ai/tty7](https://github.com/l0ng-ai/tty7) |
+| **下载与发布** | [上游 Releases](https://github.com/l0ng-ai/tty7/releases)，本 fork 不发布构建产物 |
+| **文档** | 这里的 [`docs/`](docs/) 来自上游，随上游同步 |
+| **Issue、Discord、社区** | 请走上游，除非问题只由本 fork 的改动引起 |
+
+下文描述的是上游版本的 tty7。上方徽章指向的是上游的 CI 和发布，而不是本 fork。
+本 fork 的本地改动可能领先、落后或完全不存在于上游，也不代表上游认可或被合并回上游。
+
+与上游同步：
+
+```sh
+git remote add upstream https://github.com/l0ng-ai/tty7.git   # 只需一次
+git fetch upstream && git merge upstream/main
+```
+
 ## 为什么
 
 shell 和窗格由后台常驻的 server 持有，而不是窗口。下面这些特性几乎都源自这一设计。
