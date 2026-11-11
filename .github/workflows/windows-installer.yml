@@ -1,6 +1,16 @@
 name: Windows installer
 
 on:
+  push:
+    branches: ["feat/**"]
+    paths:
+      - ".github/workflows/windows-installer.yml"
+      - "src/**"
+      - "crates/**"
+      - "assets/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
   workflow_dispatch:
 
 permissions:
