@@ -116,6 +116,12 @@ pub struct Attachment {
     pub token: String,
     #[serde(default)]
     pub hostname: String,
+    /// Stable installation identity of the holder, empty when the peer is old
+    /// or unknown. Display and "is this me?" only; never authentication.
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub client_name: String,
     #[serde(default)]
     pub since: u64,
 }
@@ -125,7 +131,57 @@ impl Attachment {
         Attachment {
             token: token.into(),
             hostname: hostname.into(),
+            client_id: String::new(),
+            client_name: String::new(),
             since: unix_now(),
+        }
+    }
+
+    pub fn with_client(
+        mut self,
+        client_id: impl Into<String>,
+        client_name: impl Into<String>,
+    ) -> Attachment {
+        self.client_id = client_id.into();
+        self.client_name = client_name.into();
+        self
+    }
+
+    /// The human-readable holder label: the client's own name when it has one,
+    /// otherwise the machine name. Empty only for a peer that reported neither.
+    pub fn display_name(&self) -> &str {
+        if !self.client_name.is_empty() {
+            &self.client_name
+        } else {
+            &self.hostname
+        }
+    }
+}
+
+/// The client that created (or later claimed) a workspace. The name is a
+/// snapshot taken when it was written, so a workspace whose owner is offline
+/// still reads as a person rather than a bare uuid.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatedBy {
+    pub client_id: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+/// A requested change to [`Workspace::created_by`]. `Set` and `Clear` are
+/// distinct because "leave it alone" is the absence of the field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CreatedByChange {
+    Set(CreatedBy),
+    Clear,
+}
+
+impl CreatedByChange {
+    pub fn apply(&self) -> Option<CreatedBy> {
+        match self {
+            CreatedByChange::Set(owner) => Some(owner.clone()),
+            CreatedByChange::Clear => None,
         }
     }
 }
@@ -142,6 +198,11 @@ pub struct Workspace {
     pub tabs: Vec<Tab>,
     #[serde(default)]
     pub active_tab: Option<TabId>,
+    /// The client that created or claimed this workspace. Missing means
+    /// unowned: every build before this field, every CLI/gateway creation, and
+    /// every workspace whose owner has not claimed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<CreatedBy>,
     /// Who is holding this workspace right now. Answered over the wire so a
     /// peer can see the workspace is spoken for, but stripped before the
     /// document is written: an attachment belongs to a live connection, and
@@ -217,6 +278,7 @@ impl Default for Workspace {
             last_active: unix_now(),
             tabs: Vec::new(),
             active_tab: None,
+            created_by: None,
             attachment: None,
             groups: WorkspaceGroups::default(),
             closed: Vec::new(),
@@ -505,6 +567,10 @@ pub enum LayoutDelta {
     },
     WorkspaceRenamed {
         name: Option<String>,
+        /// Present only when this "rename" also carries an ownership change;
+        /// old clients ignore the field and see an unchanged name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        created_by: Option<CreatedByChange>,
     },
     WorkspaceDeleted,
     WorkspaceTouched {
@@ -663,6 +729,16 @@ impl MachineStore {
         name: Option<String>,
         origin: Option<SubscriberId>,
     ) -> io::Result<Workspace> {
+        self.workspace_create_as(id, name, origin, None)
+    }
+
+    pub fn workspace_create_as(
+        &self,
+        id: Option<WorkspaceId>,
+        name: Option<String>,
+        origin: Option<SubscriberId>,
+        created_by: Option<CreatedBy>,
+    ) -> io::Result<Workspace> {
         let created = self.mutate(origin, |m| {
             if m.workspaces.len() >= MAX_WORKSPACES {
                 return Err(refuse(format!(
@@ -677,6 +753,7 @@ impl MachineStore {
             let workspace = Workspace {
                 id: id.unwrap_or_default(),
                 name: name.clone(),
+                created_by: created_by.clone(),
                 ..Workspace::default()
             };
             m.workspaces.push(workspace.clone());
@@ -702,7 +779,41 @@ impl MachineStore {
         self.mutate(origin, |m| {
             let ws = find_workspace(m, id)?;
             ws.name = name.clone();
-            Ok(((), vec![(id, LayoutDelta::WorkspaceRenamed { name })]))
+            Ok((
+                (),
+                vec![(
+                    id,
+                    LayoutDelta::WorkspaceRenamed {
+                        name,
+                        created_by: None,
+                    },
+                )],
+            ))
+        })
+    }
+
+    /// Set or clear a workspace's creator. Broadcast as the existing
+    /// `WorkspaceRenamed` delta with an unchanged name, so no new variant (and
+    /// no dialect bump) is needed for old clients.
+    pub fn workspace_set_created_by(
+        &self,
+        id: WorkspaceId,
+        change: CreatedByChange,
+        origin: Option<SubscriberId>,
+    ) -> io::Result<Workspace> {
+        self.mutate(origin, |m| {
+            let ws = find_workspace(m, id)?;
+            ws.created_by = change.apply();
+            Ok((
+                ws.clone(),
+                vec![(
+                    id,
+                    LayoutDelta::WorkspaceRenamed {
+                        name: ws.name.clone(),
+                        created_by: Some(change.clone()),
+                    },
+                )],
+            ))
         })
     }
 
@@ -2351,7 +2462,9 @@ mod tests {
         let heard = heard.lock().unwrap();
         let kinds: Vec<&LayoutDelta> = heard.iter().map(|(_, d)| d).collect();
         assert!(matches!(kinds[0], LayoutDelta::WorkspaceCreated { .. }));
-        assert!(matches!(kinds[1], LayoutDelta::WorkspaceRenamed { name: Some(n) } if n == "web"));
+        assert!(
+            matches!(kinds[1], LayoutDelta::WorkspaceRenamed { name: Some(n), .. } if n == "web")
+        );
         assert!(matches!(kinds[2], LayoutDelta::WorkspaceTouched { .. }));
         assert!(matches!(kinds[3], LayoutDelta::WorkspaceDeleted));
         assert!(
@@ -2647,6 +2760,89 @@ mod tests {
             store.pane(9).is_none(),
             "a seed on a refused op must not leak into the registry"
         );
+    }
+
+    #[test]
+    fn a_created_workspace_records_the_client_that_made_it() {
+        let (store, dir) = store();
+        let owner = CreatedBy {
+            client_id: "client-7".into(),
+            name: "Alice's laptop".into(),
+        };
+        let owned = store
+            .workspace_create_as(None, Some("api".into()), None, Some(owner.clone()))
+            .unwrap();
+        assert_eq!(owned.created_by, Some(owner.clone()));
+
+        let unowned = store.workspace_create(None, None, None).unwrap();
+        assert_eq!(unowned.created_by, None);
+
+        store.flush();
+        let reopened = MachineStore::open(dir.path().join(MACHINE_FILE));
+        assert_eq!(
+            reopened.workspace(owned.id).unwrap().created_by,
+            Some(owner)
+        );
+        assert_eq!(reopened.workspace(unowned.id).unwrap().created_by, None);
+    }
+
+    #[test]
+    fn an_unowned_workspace_writes_no_created_by_key() {
+        let (store, dir) = store();
+        store
+            .workspace_create(None, Some("old".into()), None)
+            .unwrap();
+        store.flush();
+        let text = std::fs::read_to_string(dir.path().join(MACHINE_FILE)).unwrap();
+        assert!(
+            !text.contains("created_by"),
+            "a tree nobody has claimed must stay readable by older builds unchanged"
+        );
+    }
+
+    #[test]
+    fn setting_and_clearing_created_by_reaches_subscribers() {
+        let (store, _dir, ws, _tab) = store_with_tab();
+        let (_sub, heard) = recorded(&store);
+        let owner = CreatedBy {
+            client_id: "client-7".into(),
+            name: "Alice's laptop".into(),
+        };
+
+        store
+            .workspace_set_created_by(ws, CreatedByChange::Set(owner.clone()), None)
+            .unwrap();
+        assert_eq!(store.workspace(ws).unwrap().created_by, Some(owner.clone()));
+        {
+            let heard = heard.lock().unwrap();
+            assert_eq!(heard.len(), 1);
+            assert!(matches!(
+                &heard[0].1,
+                LayoutDelta::WorkspaceRenamed {
+                    created_by: Some(CreatedByChange::Set(seen)),
+                    ..
+                } if seen == &owner
+            ));
+        }
+
+        store
+            .workspace_set_created_by(ws, CreatedByChange::Clear, None)
+            .unwrap();
+        assert_eq!(store.workspace(ws).unwrap().created_by, None);
+        assert_eq!(heard.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_old_workspace_renamed_delta_still_decodes() {
+        let delta: LayoutDelta =
+            serde_json::from_str(r#"{"workspace_renamed":{"name":"api"}}"#).unwrap();
+        assert!(matches!(
+            delta,
+            LayoutDelta::WorkspaceRenamed {
+                name: Some(ref n),
+                created_by: None,
+            } if n == "api"
+        ));
     }
 
     #[test]

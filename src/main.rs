@@ -807,6 +807,17 @@ fn main() {
         // The load above is reused rather than re-read: reading the same
         // file twice at launch would report the same failure twice.
         cx.set_global(config);
+        // The GUI's identity is per config directory. Install it before any
+        // link opens, so the first hello already carries it. The daemon and
+        // helper roles return before this point.
+        let identity = crate::core::client_identity::load_or_create();
+        if !identity.persisted {
+            crate::terminal::notify_desktop(
+                Some("tty7"),
+                crate::ui::i18n::t(crate::ui::i18n::L10nKey::ClientIdentityNotPersisted),
+            );
+        }
+        crate::core::client_identity::install(identity);
         crate::ui::theme::refresh_system_appearance(cx);
         crate::core::session::WorkspaceStore::init(cx);
         crate::ui::windows::WindowRegistry::init(cx);

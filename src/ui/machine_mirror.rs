@@ -170,6 +170,7 @@ impl MachineMirrors {
         machine_ws: WorkspaceId,
         tabs: Vec<Tab>,
         active: Option<TabId>,
+        created_by: Option<tty7_core::core::machine::CreatedBy>,
     ) {
         Self::write(cx, host, move |machine| {
             let ws = match machine.workspaces.iter_mut().find(|w| w.id == machine_ws) {
@@ -184,6 +185,7 @@ impl MachineMirrors {
             };
             ws.tabs = tabs.clone();
             ws.active_tab = active;
+            ws.created_by = created_by.clone();
         });
     }
 
@@ -294,6 +296,14 @@ impl MachineMirrors {
                     ws.last_active = touched;
                 }
             }
+            ControlRequest::WorkspaceSetCreatedBy {
+                workspace,
+                created_by,
+            } => {
+                if let Some(ws) = machine.workspaces.iter_mut().find(|w| w.id == *workspace) {
+                    ws.created_by = created_by.apply();
+                }
+            }
             ControlRequest::WorkspaceRemove { workspace } => {
                 machine.workspaces.retain(|w| w.id != *workspace);
             }
@@ -349,8 +359,11 @@ fn apply(machine: &mut Machine, workspace: WorkspaceId, delta: &LayoutDelta) -> 
         LayoutDelta::WorkspaceCreated { .. }
         | LayoutDelta::WorkspaceDeleted
         | LayoutDelta::PaneFacts { .. } => unreachable!("handled above"),
-        LayoutDelta::WorkspaceRenamed { name } => {
+        LayoutDelta::WorkspaceRenamed { name, created_by } => {
             ws.name = name.clone();
+            if let Some(change) = created_by {
+                ws.created_by = change.apply();
+            }
             true
         }
         LayoutDelta::WorkspaceTouched { last_active } => {
@@ -561,6 +574,7 @@ pub struct UnclaimedWorkspace {
     pub path: Option<String>,
     pub last_active: u64,
     pub live: bool,
+    pub created_by: Option<crate::core::machine::CreatedBy>,
 }
 
 /// Workspaces made by the CLI, or by another client — as real as any other,
@@ -586,8 +600,24 @@ pub fn unclaimed_local_workspaces(cx: &App) -> Vec<UnclaimedWorkspace> {
                 .flat_map(|t| t.root.pane_ids())
                 .filter_map(|id| machine.panes.iter().find(|p| p.id == id))
                 .any(|p| p.live),
+            created_by: ws.created_by.clone(),
         })
         .collect()
+}
+
+/// Who created `id` on `host`, from that machine's mirror. `None` while the
+/// mirror is not ready, and for a workspace nobody has claimed.
+pub fn created_by(
+    cx: &App,
+    host: HostId,
+    id: WorkspaceId,
+) -> Option<crate::core::machine::CreatedBy> {
+    MachineMirrors::machine(cx, host)?
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == id)?
+        .created_by
+        .clone()
 }
 
 pub fn subject_path(cx: &App, entry: &crate::core::session::WindowView) -> Option<String> {
@@ -652,6 +682,7 @@ mod tests {
                 HostId::LOCAL,
                 id,
                 vec![kept.clone(), closed.clone()],
+                None,
                 None,
             );
 
@@ -740,7 +771,14 @@ mod tests {
             // What the window knows the moment its create is answered: a
             // workspace of its own, and the name the machine put on it.
             MachineMirrors::install(cx, HostId::LOCAL, Machine::default());
-            MachineMirrors::note_synced_workspace(cx, HostId::LOCAL, id, vec![leaf_tab(1)], None);
+            MachineMirrors::note_synced_workspace(
+                cx,
+                HostId::LOCAL,
+                id,
+                vec![leaf_tab(1)],
+                None,
+                None,
+            );
             MachineMirrors::note_workspace_name(
                 cx,
                 HostId::LOCAL,
@@ -808,7 +846,14 @@ mod tests {
             // What the window knows the moment it pushes its first tab: the
             // tab it made, and the seed it sent along.
             MachineMirrors::install(cx, HostId::LOCAL, Machine::default());
-            MachineMirrors::note_synced_workspace(cx, HostId::LOCAL, id, vec![leaf_tab(1)], None);
+            MachineMirrors::note_synced_workspace(
+                cx,
+                HostId::LOCAL,
+                id,
+                vec![leaf_tab(1)],
+                None,
+                None,
+            );
             let seeded = PaneSeed {
                 cwd: Some("/work/verify-main".into()),
                 ..PaneSeed::bare(1)
@@ -916,6 +961,7 @@ mod tests {
                 HostId::LOCAL,
                 id,
                 vec![pushed.clone()],
+                None,
                 None,
             );
             let seeded = |pane, cwd: &str| {
@@ -1145,7 +1191,10 @@ mod tests {
         assert!(!apply(
             &mut machine,
             WorkspaceId::new(),
-            &LayoutDelta::WorkspaceRenamed { name: None },
+            &LayoutDelta::WorkspaceRenamed {
+                name: None,
+                created_by: None
+            },
         ));
     }
 
@@ -1192,7 +1241,10 @@ mod tests {
                 !asked(
                     cx,
                     HostId::LOCAL,
-                    &LayoutDelta::WorkspaceRenamed { name: None }
+                    &LayoutDelta::WorkspaceRenamed {
+                        name: None,
+                        created_by: None
+                    }
                 ),
                 "a delta that is not about a pane's facts"
             );

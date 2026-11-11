@@ -393,18 +393,36 @@ impl Claims {
     }
 
     /// Whether a hydration may put `ws`'s panes up, given who the daemon says
-    /// holds it. `me` is this machine's name, which is also what a connection
-    /// of ours the daemon has not noticed is gone yet would be holding it as.
-    fn gate(&mut self, ws: WorkspaceId, holder: Option<&str>, me: &str) -> Gate {
+    /// holds it. The client id decides when both sides have one; hostname is
+    /// only the fallback for peers that predate it.
+    fn gate(
+        &mut self,
+        ws: WorkspaceId,
+        holder: Option<&tty7_core::core::machine::Attachment>,
+        owner: Option<&tty7_core::core::machine::CreatedBy>,
+        my_client_id: &str,
+        my_hostname: &str,
+    ) -> Gate {
         if self.preempted.contains_key(&ws) {
             return Gate::Yield { newly: false };
         }
         if self.reclaiming.contains_key(&ws) || self.explicit.contains(&ws) {
             return Gate::Proceed;
         }
+        if let Some(owner) = owner
+            && !owner.client_id.is_empty()
+            && owner.client_id != my_client_id
+        {
+            let by = crate::ui::ownership::name(owner);
+            self.preempt(ws, by);
+            return Gate::Yield { newly: true };
+        }
         match holder {
-            Some(by) if !by.is_empty() && by != me => {
-                self.preempt(ws, by.to_string());
+            Some(held)
+                if crate::ui::remote_connect::holder_is_other(held, my_client_id, my_hostname) =>
+            {
+                let by = crate::ui::remote_connect::holder_label(held);
+                self.preempt(ws, by);
                 Gate::Yield { newly: true }
             }
             _ => Gate::Proceed,
@@ -481,14 +499,22 @@ fn claim_blocking(client: &ControlClient, ws: WorkspaceId, claim: Claim) -> Clai
         // client claiming it between this read and the attach below is possible
         // and harmless: that client is told it was taken over, and keeps its
         // Take Back.
+        let identity = tty7_core::core::client_identity::current();
         let me = crate::ui::remote_connect::client_hostname();
         if let Ok(ReplyOk::WorkspaceTree(tree)) =
             client.call(ControlRequest::WorkspaceTree { workspace: ws })
-            && let Some(holder) = tree.attachment
-            && !holder.hostname.is_empty()
-            && holder.hostname != me
         {
-            return ClaimOutcome::HeldBy(holder.hostname);
+            if let Some(owner) = tree.created_by.as_ref()
+                && !owner.client_id.is_empty()
+                && owner.client_id != identity.id
+            {
+                return ClaimOutcome::HeldBy(crate::ui::ownership::name(owner));
+            }
+            if let Some(holder) = tree.attachment
+                && crate::ui::remote_connect::holder_is_other(&holder, &identity.id, &me)
+            {
+                return ClaimOutcome::HeldBy(crate::ui::remote_connect::holder_label(&holder));
+            }
         }
     }
     match client.call(ControlRequest::WorkspaceAttach { id: ws.to_string() }) {
@@ -596,20 +622,25 @@ impl LocalLink {
     pub(crate) fn hydration_may_proceed(
         cx: &mut App,
         ws: WorkspaceId,
-        holder: Option<&str>,
+        holder: Option<&tty7_core::core::machine::Attachment>,
+        owner: Option<&tty7_core::core::machine::CreatedBy>,
     ) -> bool {
+        let identity = tty7_core::core::client_identity::current();
         let me = crate::ui::remote_connect::client_hostname();
-        let gate = cx
-            .default_global::<LocalLink>()
-            .claims
-            .gate(ws, holder, &me);
+        let gate =
+            cx.default_global::<LocalLink>()
+                .claims
+                .gate(ws, holder, owner, &identity.id, &me);
         match gate {
             Gate::Proceed => true,
             Gate::Yield { newly } => {
                 if newly {
                     log::info!(
                         "workspace {ws} is being driven by {}; opening it taken over",
-                        holder.unwrap_or_default()
+                        owner
+                            .map(crate::ui::ownership::name)
+                            .or_else(|| { holder.map(crate::ui::remote_connect::holder_label) })
+                            .unwrap_or_default()
                     );
                     let_go(cx, ws);
                 }
@@ -662,10 +693,12 @@ fn connect_blocking() -> std::io::Result<Arc<ControlClient>> {
     // The machine's real name, not "this computer": it is what a remote client
     // this window takes a workspace from is told ("opened on …"), and from over
     // there "this computer" names the wrong machine.
+    let identity = tty7_core::core::client_identity::current();
     let hello = ControlHello::gui(
         uuid::Uuid::new_v4().to_string(),
         crate::ui::remote_connect::client_hostname(),
-    );
+    )
+    .with_client(identity.id, identity.name);
     let sink: tty7_core::daemon::control::EventSink = Box::new(local_event_sink);
     #[cfg(unix)]
     let client = {
@@ -758,6 +791,11 @@ mod schedule_tests {
 #[cfg(test)]
 mod claims_tests {
     use super::*;
+    use tty7_core::core::machine::Attachment;
+
+    fn held(name: &str) -> Attachment {
+        Attachment::new("token", name)
+    }
 
     fn open(ids: &[WorkspaceId]) -> HashSet<WorkspaceId> {
         ids.iter().copied().collect()
@@ -838,7 +876,7 @@ mod claims_tests {
             "a workspace someone else holds is never reclaimed by the pump"
         );
         assert_eq!(
-            claims.gate(ws, Some("laptop"), "studio"),
+            claims.gate(ws, Some(&held("laptop")), None, "", "studio"),
             Gate::Yield { newly: false },
             "nor rebuilt under the client that has it"
         );
@@ -881,19 +919,57 @@ mod claims_tests {
             WorkspaceId::new(),
         );
         assert_eq!(
-            claims.gate(restored, Some("laptop"), "studio"),
+            claims.gate(restored, Some(&held("laptop")), None, "", "studio"),
             Gate::Yield { newly: true }
         );
         assert!(claims.preempted.contains_key(&restored));
 
         claims.explicit.insert(asked);
-        assert_eq!(claims.gate(asked, Some("laptop"), "studio"), Gate::Proceed);
-
-        assert_eq!(claims.gate(free, None, "studio"), Gate::Proceed);
         assert_eq!(
-            claims.gate(stale_self, Some("studio"), "studio"),
+            claims.gate(asked, Some(&held("laptop")), None, "", "studio"),
+            Gate::Proceed
+        );
+
+        assert_eq!(claims.gate(free, None, None, "", "studio"), Gate::Proceed);
+        assert_eq!(
+            claims.gate(stale_self, Some(&held("studio")), None, "", "studio"),
             Gate::Proceed,
             "this machine's own name is a connection of ours the daemon has not dropped yet"
+        );
+
+        // Ownership alone keeps an automatic restore from attaching: the
+        // workspace belongs to another client even when nobody is holding it.
+        let owned = tty7_core::core::machine::CreatedBy {
+            client_id: "client-b".into(),
+            name: "Bob".into(),
+        };
+        assert_eq!(
+            claims.gate(WorkspaceId::new(), None, Some(&owned), "client-a", "studio"),
+            Gate::Yield { newly: true }
+        );
+
+        // Two clients on one machine are told apart by id, not hostname.
+        let other_on_same_host = held("studio").with_client("client-b", "Bob");
+        assert_eq!(
+            claims.gate(
+                WorkspaceId::new(),
+                Some(&other_on_same_host),
+                None,
+                "client-a",
+                "studio"
+            ),
+            Gate::Yield { newly: true }
+        );
+        let me_on_same_host = held("studio").with_client("client-a", "Alice");
+        assert_eq!(
+            claims.gate(
+                WorkspaceId::new(),
+                Some(&me_on_same_host),
+                None,
+                "client-a",
+                "studio"
+            ),
+            Gate::Proceed
         );
     }
 

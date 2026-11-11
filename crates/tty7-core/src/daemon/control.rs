@@ -61,6 +61,15 @@ use super::protocol::{MAX_FRAME, read_frame, write_frame};
 ///
 /// v12 adds `AgentSessions`: the search's Sessions tab in a remote workspace
 /// lists the coding-agent sessions of the machine the workspace is on.
+///
+/// Client identity (workspace ownership) deliberately does **not** take a
+/// number. Its hello, attachment and workspace changes are optional fields on
+/// messages both peers already decode, and its only new request
+/// (`WorkspaceSetCreatedBy`) is gated on [`feature::CLIENT_IDENTITY`]: an old
+/// server never advertises it, so a new client never sends the request; old
+/// clients never send it at all. The rule above still applies to every
+/// ungated variant — an unknown request still takes a link down — which is why
+/// the gate has to be checked before the call, not hoped for at the decoder.
 pub const CONTROL_VERSION: u32 = 12;
 
 const DIALECT_MARKER: &str = "speaks control v";
@@ -165,6 +174,11 @@ pub mod feature {
     /// Without it a client closes and reopens tabs the way it always did, from
     /// a list of its own that ends with the window.
     pub const CLOSED_TABS: &str = "closed-tabs";
+    /// The peer understands client identity fields and the workspace
+    /// `created_by` request. The request is new, so it is only ever sent after
+    /// this name appears in the hello — see [`CONTROL_VERSION`] for why that
+    /// negotiation replaces a dialect bump here.
+    pub const CLIENT_IDENTITY: &str = "client-identity";
 }
 
 pub use crate::host::{
@@ -174,7 +188,7 @@ pub use crate::host::{
 pub use crate::core::shells::{DetectedShell, ShellInventory};
 
 pub use crate::core::machine::{
-    Axis, LayoutDelta, Machine, PaneSeed, ReopenedTab, Side, Tab, TabId,
+    Axis, CreatedByChange, LayoutDelta, Machine, PaneSeed, ReopenedTab, Side, Tab, TabId,
 };
 pub use crate::core::session::WorkspaceId;
 
@@ -295,6 +309,14 @@ pub enum ControlRequest {
     WorkspaceRename {
         workspace: WorkspaceId,
         name: Option<String>,
+    },
+    /// Set or clear the client a workspace belongs to. Gated on
+    /// [`feature::CLIENT_IDENTITY`]: a peer that predates the feature never
+    /// receives it, which is what lets the request exist without a dialect
+    /// bump. The server cannot verify who is asking; ownership is a label.
+    WorkspaceSetCreatedBy {
+        workspace: WorkspaceId,
+        created_by: CreatedByChange,
     },
     WorkspaceRemove {
         workspace: WorkspaceId,
@@ -519,6 +541,7 @@ impl ControlRequest {
             | WorkspaceTree { .. }
             | WorkspaceCreate { .. }
             | WorkspaceRename { .. }
+            | WorkspaceSetCreatedBy { .. }
             | WorkspaceRemove { .. }
             | WorkspaceTouch { .. }
             | WorkspaceSetActiveTab { .. }
@@ -750,6 +773,14 @@ pub struct ControlHello {
     pub workspace: Option<String>,
     pub client_token: String,
     pub client_hostname: String,
+    /// Stable identity of the installation behind this connection. Empty for
+    /// peers that predate it (CLI, gateway, older clients) and for tests that
+    /// have no identity to offer.
+    #[serde(default)]
+    pub client_id: String,
+    /// Human-readable name for that identity. Display only.
+    #[serde(default)]
+    pub client_name: String,
     #[serde(default)]
     pub gui: bool,
 }
@@ -761,8 +792,22 @@ impl ControlHello {
             workspace: None,
             client_token: client_token.into(),
             client_hostname: client_hostname.into(),
+            client_id: String::new(),
+            client_name: String::new(),
             gui: false,
         }
+    }
+
+    /// Attach the installation identity to the hello. Empty values are left
+    /// empty: an unknown client is a valid state, not an error.
+    pub fn with_client(
+        mut self,
+        client_id: impl Into<String>,
+        client_name: impl Into<String>,
+    ) -> Self {
+        self.client_id = client_id.into();
+        self.client_name = client_name.into();
+        self
     }
 
     pub fn gui(client_token: impl Into<String>, client_hostname: impl Into<String>) -> Self {
@@ -1880,6 +1925,8 @@ mod tests {
             workspace: Some("w1".into()),
             client_token: "tok".into(),
             client_hostname: "laptop".into(),
+            client_id: String::new(),
+            client_name: String::new(),
             gui: false,
         }
     }
@@ -1913,6 +1960,18 @@ mod tests {
                        "client_hostname":"laptop"}"#;
         let hello: ControlHello = serde_json::from_str(json).expect("decodes without gui role");
         assert!(!hello.gui);
+        assert_eq!(hello.client_id, "");
+        assert_eq!(hello.client_name, "");
+    }
+
+    #[test]
+    fn client_identity_round_trips_through_the_hello() {
+        let hello = hello().with_client("client-7", "Alice's laptop");
+        let json = serde_json::to_string(&hello).unwrap();
+        let back: ControlHello = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, hello);
+        assert_eq!(back.client_id, "client-7");
+        assert_eq!(back.client_name, "Alice's laptop");
     }
 
     fn hello_ok() -> ControlHelloOk {

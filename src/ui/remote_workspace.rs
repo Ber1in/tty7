@@ -770,11 +770,15 @@ impl Tty7App {
         &mut self,
         target: RemoteTarget,
         row: RemoteWorkspaceRow,
+        take: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let host = RemoteRef::new(target, row.id);
         let id = WorkspaceStore::claim_remote(cx, host);
+        if take {
+            cx.default_global::<RemoteLinks>().explicit.insert(id);
+        }
         self.enter_remote_workspace(id, window, cx);
     }
 
@@ -787,6 +791,7 @@ impl Tty7App {
     ) {
         let host = RemoteRef::new(target.clone(), WorkspaceId::new());
         let id = WorkspaceStore::claim_remote(cx, host);
+        cx.default_global::<RemoteLinks>().explicit.insert(id);
         log::info!(
             "new remote workspace on {target} rooted at {}",
             home.display()
@@ -1354,6 +1359,10 @@ pub(crate) struct RemoteLinks {
     /// attach that follows a reconnect from one the user asked for — see
     /// [`Claim`].
     held_before: std::collections::HashSet<WorkspaceId>,
+    /// Workspaces the user opened on purpose, one-shot: the next attach may
+    /// take them from whoever holds them. A restore, a reconnect, or a pump
+    /// tick is not in here and therefore never preempts.
+    explicit: std::collections::HashSet<WorkspaceId>,
     /// Machines the pump leaves alone until a person asks for them again:
     /// disconnected from the switcher, or — since #820 — an authentication
     /// the user closed the sheet on rather than answered.
@@ -1751,9 +1760,9 @@ fn forget_closed_workspaces(cx: &mut gpui::App) {
         .filter(|w| w.open)
         .map(|w| w.id)
         .collect();
-    cx.default_global::<RemoteLinks>()
-        .held_before
-        .retain(|id| open.contains(id));
+    let links = cx.default_global::<RemoteLinks>();
+    links.held_before.retain(|id| open.contains(id));
+    links.explicit.retain(|id| open.contains(id));
 }
 
 /// The workspaces on this machine the far end has not been told about yet,
@@ -1815,10 +1824,12 @@ enum ClaimOutcome {
 }
 
 fn claim_for(links: &RemoteLinks, workspace: WorkspaceId) -> Claim {
-    if links.held_before.contains(&workspace) && !links.reclaiming.contains_key(&workspace) {
-        Claim::IfFree
-    } else {
+    if links.reclaiming.contains_key(&workspace) || links.explicit.contains(&workspace) {
         Claim::Take
+    } else {
+        // Never take over on a restore, a reconnect, or a pump tick. Only the
+        // explicit set above — a click the user made — is allowed to preempt.
+        Claim::IfFree
     }
 }
 
@@ -1828,12 +1839,12 @@ fn claim_for(links: &RemoteLinks, workspace: WorkspaceId) -> Claim {
 /// putting that one back is exactly what a reconnect is for.
 fn held_by_other(
     attachment: Option<&tty7_core::core::machine::Attachment>,
-    me: &str,
+    my_client_id: &str,
+    my_hostname: &str,
 ) -> Option<String> {
     attachment
-        .map(|held| held.hostname.as_str())
-        .filter(|holder| !holder.is_empty() && *holder != me)
-        .map(str::to_string)
+        .filter(|held| crate::ui::remote_connect::holder_is_other(held, my_client_id, my_hostname))
+        .map(crate::ui::remote_connect::holder_label)
 }
 
 fn claim_blocking(
@@ -1845,8 +1856,21 @@ fn claim_blocking(
         && let Ok(workspace) = key.parse::<WorkspaceId>()
         && let Ok(ReplyOk::WorkspaceTree(tree)) =
             client.call(ControlRequest::WorkspaceTree { workspace })
-        && let Some(by) =
-            held_by_other(tree.attachment.as_ref(), &remote_connect::client_hostname())
+        && let Some(by) = {
+            let identity = tty7_core::core::client_identity::current();
+            if let Some(owner) = tree.created_by.as_ref()
+                && !owner.client_id.is_empty()
+                && owner.client_id != identity.id
+            {
+                Some(crate::ui::ownership::name(owner))
+            } else {
+                held_by_other(
+                    tree.attachment.as_ref(),
+                    &identity.id,
+                    &remote_connect::client_hostname(),
+                )
+            }
+        }
     {
         // A race with another client claiming it between this read and the
         // attach below is possible and harmless: that client is told it was
@@ -1909,6 +1933,7 @@ fn finish_reclaim(cx: &mut gpui::App, host: HostId, workspace: WorkspaceId, outc
     let reclaimed = {
         let links = cx.default_global::<RemoteLinks>();
         links.attaching.remove(&workspace);
+        links.explicit.remove(&workspace);
         match &outcome {
             ClaimOutcome::Attached { .. } => {
                 links.held_before.insert(workspace);
@@ -4155,13 +4180,23 @@ mod tests {
         use tty7_core::core::machine::Attachment;
 
         let held = |name: &str| Attachment::new("token", name);
-        assert_eq!(held_by_other(None, "laptop"), None);
-        assert_eq!(held_by_other(Some(&held("laptop")), "laptop"), None);
-        assert_eq!(held_by_other(Some(&held("")), "laptop"), None);
+        assert_eq!(held_by_other(None, "", "laptop"), None);
+        assert_eq!(held_by_other(Some(&held("laptop")), "", "laptop"), None);
+        assert_eq!(held_by_other(Some(&held("")), "", "laptop"), None);
         assert_eq!(
-            held_by_other(Some(&held("desktop")), "laptop"),
+            held_by_other(Some(&held("desktop")), "", "laptop"),
             Some("desktop".to_string())
         );
+
+        // With ids on both sides, the id decides even when the machines have
+        // the same name; the display name is preferred over the hostname.
+        let same_host = held("laptop").with_client("client-b", "Bob's laptop");
+        assert_eq!(
+            held_by_other(Some(&same_host), "client-a", "laptop"),
+            Some("Bob's laptop".to_string())
+        );
+        let mine = held("laptop").with_client("client-a", "Alice's laptop");
+        assert_eq!(held_by_other(Some(&mine), "client-a", "laptop"), None);
     }
 
     /// The bug behind a sleeping laptop taking its workspace back from the
@@ -4174,8 +4209,14 @@ mod tests {
             let (host, id) = open_remote_workspace(cx);
             assert_eq!(
                 claim_for(cx.default_global::<RemoteLinks>(), id),
+                Claim::IfFree,
+                "a restore or reconnect never takes a workspace on its own"
+            );
+            cx.default_global::<RemoteLinks>().explicit.insert(id);
+            assert_eq!(
+                claim_for(cx.default_global::<RemoteLinks>(), id),
                 Claim::Take,
-                "a workspace this client has never held is being opened"
+                "a workspace the user opened on purpose may be taken"
             );
 
             assert_eq!(reclaims_due(cx, host).len(), 1);

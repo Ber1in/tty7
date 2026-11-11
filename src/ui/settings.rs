@@ -343,6 +343,11 @@ fn settings_search_entries() -> &'static [SearchEntry] {
             keywords: SettingsSearchLanguageKeywords,
         },
         SearchEntry {
+            section: General,
+            title: SettingsClient,
+            keywords: SettingsSearchClientKeywords,
+        },
+        SearchEntry {
             section: Appearance,
             title: SettingsThemeIntroTitle,
             keywords: SettingsSearchThemeKeywords,
@@ -1269,6 +1274,7 @@ pub(crate) struct SettingsState {
     pub(crate) reveal_first_hit: Cell<bool>,
     /// The families the font menus list, read once when the page opens.
     pub(crate) font_names: std::rc::Rc<Vec<String>>,
+    pub(crate) client_name_input: Entity<InputState>,
     pub(crate) shell_program_input: Entity<InputState>,
     pub(crate) shell_args_input: Entity<InputState>,
     pub(crate) wd_path_input: Entity<InputState>,

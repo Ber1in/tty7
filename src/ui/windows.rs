@@ -449,11 +449,54 @@ pub type RestoreTarget = (WorkspaceId, usize);
 /// machine. The requested directory is a path on this computer and a remote
 /// workspace has no business spawning it, so that case starts a fresh local
 /// workspace — which is what every path-carrying launch used to do.
+/// The name of another client that owns `id`, when this machine already knows
+/// the answer. Unknown ownership (mirror not pulled, old server) restores the
+/// workspace as before: a launch must not start empty because a probe had not
+/// landed yet.
+fn owner_elsewhere(cx: &App, id: WorkspaceId) -> Option<String> {
+    let views = WorkspaceStore::all(cx);
+    let view = views.get(id)?;
+    let (host, machine_id) = match &view.host {
+        Some(remote) => (remote.host_id(), remote.workspace),
+        None => (
+            crate::core::session::HostId::LOCAL,
+            crate::ui::tree_sync::tree_workspace_id(cx, id),
+        ),
+    };
+    let owner = crate::ui::machine_mirror::created_by(cx, host, machine_id)?;
+    let me = tty7_core::core::client_identity::current();
+    if me.id.is_empty() || owner.client_id.is_empty() || owner.client_id == me.id {
+        return None;
+    }
+    Some(if owner.name.is_empty() {
+        t(crate::ui::i18n::L10nKey::ClientUnknown).to_string()
+    } else {
+        owner.name
+    })
+}
+
 pub fn restore_target(cx: &mut App, path: Option<&std::path::Path>) -> Option<RestoreTarget> {
     if path.is_some() {
         let views = WorkspaceStore::all(cx);
         let candidate = views.workspace_to_restore()?;
         if views.get(candidate).is_some_and(|view| view.is_remote()) {
+            return None;
+        }
+    }
+    {
+        let views = WorkspaceStore::all(cx);
+        if let Some(candidate) = views.workspace_to_restore()
+            && let Some(owner) = owner_elsewhere(cx, candidate)
+        {
+            let name = crate::ui::machine_mirror::display_name_for(cx, candidate)
+                .unwrap_or_else(|| t(L10nKey::WindowUntitled).to_string());
+            crate::terminal::notify_desktop(
+                Some("tty7"),
+                &t_fmt(
+                    L10nKey::RestoreSkippedOtherOwner,
+                    &[("name", &name), ("owner", &owner)],
+                ),
+            );
             return None;
         }
     }
@@ -909,6 +952,54 @@ mod tests {
             origin: point(px(x), px(y)),
             size: size(px(800.), px(600.)),
         }
+    }
+
+    #[gpui::test]
+    fn a_launch_skips_a_workspace_owned_by_another_client(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            set_locale("en");
+            tty7_core::core::client_identity::install(
+                tty7_core::core::client_identity::ClientIdentity {
+                    id: "client-a".into(),
+                    name: "Alice".into(),
+                    persisted: true,
+                    ..Default::default()
+                },
+            );
+            let id = WorkspaceId::new();
+            WorkspaceStore::install_for_test(
+                cx,
+                WindowViews {
+                    active: Some(id),
+                    views: vec![WindowView {
+                        id,
+                        open: true,
+                        last_active: 10,
+                        ..Default::default()
+                    }],
+                },
+            );
+            crate::ui::machine_mirror::MachineMirrors::install(
+                cx,
+                crate::core::session::HostId::LOCAL,
+                tty7_core::core::machine::Machine {
+                    workspaces: vec![tty7_core::core::machine::Workspace {
+                        id,
+                        created_by: Some(tty7_core::core::machine::CreatedBy {
+                            client_id: "client-b".into(),
+                            name: "Bob".into(),
+                        }),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            );
+            assert!(
+                restore_target(cx, None).is_none(),
+                "another client's workspace must not be restored automatically"
+            );
+            tty7_core::core::client_identity::install(Default::default());
+        });
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, Subscription,
-    Window, div, prelude::*, px,
+    AnyElement, App, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, PromptLevel,
+    Subscription, Window, div, prelude::*, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -168,6 +168,9 @@ struct Row {
     /// stable number the Workspaces menu shows too (#760). The list itself
     /// stays most-recently-used first; the number is what does not move.
     slot: Option<usize>,
+    /// Who created (or claimed) this workspace. `None` is unowned and always
+    /// visible; the default view hides rows owned by another client.
+    created_by: Option<crate::core::machine::CreatedBy>,
     tabs: Vec<TabRow>,
 }
 
@@ -405,11 +408,32 @@ impl Layout {
 /// workspace, most recently used first with this window's own workspace on
 /// top. A query matching a machine's name keeps all of that machine's rows —
 /// searching "devbox" is how the old per-machine grouping is asked for now.
-fn flatten(groups: &[Group], query: &str) -> Vec<Nav> {
+fn ownership_shows(row: &Row, show_all: bool, my_client_id: &str) -> bool {
+    if show_all || row.current || my_client_id.is_empty() {
+        return true;
+    }
+    match &row.created_by {
+        None => true,
+        Some(owner) => owner.client_id.is_empty() || owner.client_id == my_client_id,
+    }
+}
+
+fn ownership_hidden(groups: &[Group], show_all: bool, my_client_id: &str) -> usize {
+    groups
+        .iter()
+        .flat_map(|group| group.rows.iter())
+        .filter(|row| !ownership_shows(row, show_all, my_client_id))
+        .count()
+}
+
+fn flatten(groups: &[Group], query: &str, show_all: bool, my_client_id: &str) -> Vec<Nav> {
     let mut nav: Vec<Nav> = Vec::new();
     for (g, group) in groups.iter().enumerate() {
         let matched_host = group.label.to_lowercase().contains(query);
         for (r, row) in group.rows.iter().enumerate() {
+            if !ownership_shows(row, show_all, my_client_id) {
+                continue;
+            }
             if query.is_empty() || matched_host || row.matches(query) {
                 nav.push((g, r));
             }
@@ -767,6 +791,9 @@ impl Tty7App {
                 // A row's path is on the workspace's own machine, so that is
                 // the machine whose home may shorten it (#580).
                 let home = crate::ui::path_display::home_for_host(app, w.host_id());
+                // A remote view carries the client-local id; the machine tree
+                // (and ownership) is keyed by the far side's id.
+                let machine_id = w.host.as_ref().map(|r| r.workspace).unwrap_or(w.id);
                 groups[slot].rows.push(Row {
                     id: w.id,
                     name: crate::ui::machine_mirror::display_name(app, w)
@@ -785,6 +812,7 @@ impl Tty7App {
                     adopt: None,
                     remote_id: w.host.as_ref().map(|r| r.workspace),
                     slot: slot_of(w.id),
+                    created_by: crate::ui::machine_mirror::created_by(app, w.host_id(), machine_id),
                     tabs: self.tab_rows_for(w.id, self.switcher_mru(), app),
                 });
             }
@@ -864,6 +892,11 @@ impl Tty7App {
                     adopt: None,
                     remote_id: None,
                     slot: slot_of(current),
+                    created_by: crate::ui::machine_mirror::created_by(
+                        app,
+                        crate::core::session::HostId::LOCAL,
+                        current,
+                    ),
                     tabs: self.tab_rows_for(current, self.switcher_mru(), app),
                 },
             );
@@ -913,6 +946,7 @@ impl Tty7App {
                     adopt: None,
                     remote_id: None,
                     slot: None,
+                    created_by: ws.created_by,
                     tabs: self.tab_rows_for(ws.id, self.switcher_mru(), app),
                 })
                 .collect();
@@ -1106,7 +1140,8 @@ impl Tty7App {
             .as_ref()
             .map(|sw| sw.text(cx))
             .unwrap_or_default();
-        let nav = flatten(&groups, &query);
+        let identity = tty7_core::core::client_identity::current();
+        let nav = flatten(&groups, &query, identity.show_all, &identity.id);
         Layout { groups, nav }
     }
 
@@ -1132,6 +1167,34 @@ impl Tty7App {
         link_from(self.connect.as_ref(), target, supervised, has_link)
     }
 
+    /// The control client and the machine-side id for `id`, when a fresh
+    /// question about its holder can be asked. A remote whose link is not up
+    /// has nobody to ask yet; opening it will connect and claim politely.
+    fn workspace_control(
+        cx: &mut App,
+        row: &RowRef,
+    ) -> Option<(
+        std::sync::Arc<crate::daemon::control::ControlClient>,
+        WorkspaceId,
+    )> {
+        if let Some((target, remote)) = row.adopt.as_ref() {
+            let host = remote_connect::HostLinks::get(cx, target.host_id())?;
+            if !host.client().is_connected() {
+                return None;
+            }
+            return Some((host.client().clone(), remote.id));
+        }
+        if let Some(remote) = WorkspaceStore::remote_ref(cx, row.id) {
+            let host = remote_connect::HostLinks::get(cx, remote.host_id())?;
+            if !host.client().is_connected() {
+                return None;
+            }
+            return Some((host.client().clone(), remote.workspace));
+        }
+        let client = crate::ui::local_link::LocalLink::client(cx)?;
+        Some((client, crate::ui::tree_sync::tree_workspace_id(cx, row.id)))
+    }
+
     fn switcher_open(
         &mut self,
         row: RowRef,
@@ -1139,11 +1202,96 @@ impl Tty7App {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Ask the machine that owns the workspace, not a mirror this client
+        // happened to pull earlier: an attachment made since then is exactly
+        // the one that would be silently preempted.
+        let Some((client, machine_id)) = Self::workspace_control(cx, &row) else {
+            // No link to ask yet: open politely. The remote pump will claim
+            // with `IfFree`, so this cannot silently preempt a holder.
+            self.open_after_takeover(row, new_window, false, window, cx);
+            return;
+        };
+        let row = row.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    client.call(tty7_core::daemon::control::ControlRequest::WorkspaceTree {
+                        workspace: machine_id,
+                    })
+                })
+                .await;
+            let holder = match result {
+                Ok(tty7_core::daemon::control::ReplyOk::WorkspaceTree(tree)) => tree.attachment,
+                _ => None,
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let me = tty7_core::core::client_identity::current();
+                let my_host = crate::ui::remote_connect::client_hostname();
+                match holder {
+                    Some(held)
+                        if crate::ui::remote_connect::holder_is_other(&held, &me.id, &my_host) =>
+                    {
+                        this.confirm_takeover(row, held, new_window, window, cx)
+                    }
+                    _ => this.open_after_takeover(row, new_window, true, window, cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn confirm_takeover(
+        &mut self,
+        row: RowRef,
+        held: tty7_core::core::machine::Attachment,
+        new_window: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = t_fmt(L10nKey::SwitcherTakeoverTitle, &[("name", &row.name)]);
+        let owner = crate::ui::remote_connect::holder_label(&held);
+        let body = t_fmt(L10nKey::SwitcherTakeoverBody, &[("owner", &owner)]);
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &title,
+            Some(&body),
+            &crate::ui::confirm_answers(t(L10nKey::SwitcherTakeoverConfirm), t(L10nKey::Cancel)),
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(0) = answer.await {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.open_after_takeover(row, new_window, true, window, cx)
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn open_after_takeover(
+        &mut self,
+        row: RowRef,
+        new_window: bool,
+        take: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.switcher.is_none() {
+            // The panel was dismissed while the holder question was in
+            // flight; a late answer must not open a window.
+            return;
+        }
         self.close_switcher(window, cx);
         match row.adopt {
-            Some((target, remote)) => self.open_remote_workspace(target, *remote, window, cx),
+            Some((target, remote)) => self.open_remote_workspace(target, *remote, take, window, cx),
             None if new_window => crate::ui::windows::open(cx, Some(row.id)),
-            None => self.reveal_workspace(row.id, window, cx),
+            None => {
+                if take {
+                    crate::ui::local_link::LocalLink::open_explicitly(cx, row.id);
+                }
+                self.reveal_workspace(row.id, window, cx)
+            }
         }
     }
 
@@ -1799,6 +1947,9 @@ impl Tty7App {
         let (sel, column) = (sw.left_sel, sw.column);
         let (left_scroll, right_scroll) = (sw.left_scroll.clone(), sw.right_scroll.clone());
         let layout = self.switcher_layout(cx);
+        let identity = tty7_core::core::client_identity::current();
+        let hidden = ownership_hidden(&layout.groups, identity.show_all, &identity.id);
+        let total: usize = layout.groups.iter().map(|group| group.rows.len()).sum();
 
         let theme = cx.theme();
         let border = theme.border;
@@ -1810,13 +1961,18 @@ impl Tty7App {
             list = list.child(self.render_row(group, &group.rows[r], picked, Some(at), cx));
         }
         if layout.nav.is_empty() {
+            let empty = if hidden > 0 && sw.text(cx).is_empty() {
+                t(L10nKey::SwitcherNoOwned)
+            } else {
+                t(L10nKey::SwitcherNoMatch)
+            };
             list = list.child(
                 div()
                     .px(px(ROW_PAD))
                     .py(px(14.))
                     .text_size(gpui::rems(13. / 16.))
                     .text_color(cx.theme().muted_foreground)
-                    .child(t(L10nKey::SwitcherNoMatch)),
+                    .child(empty),
             );
         }
         // Orphan panes belong to the machine, not to a workspace, so they are
@@ -1895,16 +2051,35 @@ impl Tty7App {
             .map(|panel| crate::ui::theme::floating_surface(panel, cx))
             .rounded(px(CARD_RADIUS))
             .overflow_hidden()
-            .child(self.render_search(cx))
+            .child(self.render_search(hidden, total, cx))
             .child(body)
             .children(self.render_banners(&layout, cx))
             .child(self.render_footer(cx))
             .into_any_element()
     }
 
-    fn render_search(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_search(
+        &self,
+        hidden: usize,
+        total: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let theme = cx.theme();
         let (muted, border) = (theme.muted_foreground, theme.border);
+        let identity = tty7_core::core::client_identity::current();
+        let show_all = identity.show_all;
+        let label = match (show_all, hidden) {
+            (true, _) => t(L10nKey::SwitcherOnlyMine).to_string(),
+            (false, 0) if total == 0 => t(L10nKey::SwitcherAll).to_string(),
+            (false, 0) => t_fmt(L10nKey::SwitcherAllCount, &[("n", &total.to_string())]),
+            (false, hidden) => t_fmt(
+                L10nKey::SwitcherAllCountHidden,
+                &[
+                    ("total", &total.to_string()),
+                    ("hidden", &hidden.to_string()),
+                ],
+            ),
+        };
         h_flex()
             .items_center()
             .gap(px(10.))
@@ -1920,6 +2095,28 @@ impl Tty7App {
                         .as_ref()
                         .map(|sw| Input::new(&sw.query).appearance(false).pl_0()),
                 ),
+            )
+            .child(
+                div()
+                    .id("switcher-workspace-filter")
+                    .flex_none()
+                    .px(px(8.))
+                    .py(px(2.))
+                    .rounded_full()
+                    .text_size(gpui::rems(11. / 16.))
+                    .text_color(muted)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(hover_fill(cx)))
+                    .on_click(cx.listener(|_this, _, _window, cx| {
+                        let next = !tty7_core::core::client_identity::current().show_all;
+                        if let Err(e) = tty7_core::core::client_identity::set_show_all(next) {
+                            log::warn!("could not save the workspace filter: {e}");
+                        }
+                        // Every window carries the same filter; repaint them
+                        // all rather than just the one that clicked.
+                        cx.refresh_windows();
+                    }))
+                    .child(label),
             )
             .child(keycap("esc", cx))
     }
@@ -2458,7 +2655,18 @@ impl Tty7App {
         // The row keeps its own inks, so a warning still reads as one.
         let sf = rungs(cx);
         let (hover, picked_bg) = (gpui::rgb(sf.hover), gpui::rgb(sf.selected));
-        let rref = RowRef::of(group, row);
+        let mut rref = RowRef::of(group, row);
+        rref.can_manage_owner = match (group.target.as_ref(), row.adopt.as_ref()) {
+            (Some(target), Some(_)) => remote_connect::HostLinks::get(cx, target.host_id())
+                .is_some_and(|host| {
+                    let client = host.client();
+                    client.is_connected()
+                        && client
+                            .hello()
+                            .has_feature(tty7_core::daemon::control::feature::CLIENT_IDENTITY)
+                }),
+            _ => crate::ui::ownership::available(cx, row.id),
+        };
         let click_ref = rref.clone();
         let menu_ref = rref.clone();
         let ctx_ref = rref.clone();
@@ -2509,6 +2717,13 @@ impl Tty7App {
             false => t(L10nKey::SwitcherLocalHost).to_string(),
         };
         let mut meta = vec![host_label];
+        let identity = tty7_core::core::client_identity::current();
+        if !identity.id.is_empty() {
+            meta.push(crate::ui::ownership::label(
+                row.created_by.as_ref(),
+                &identity.id,
+            ));
+        }
         if !row.path.is_empty() {
             meta.push(row.path.clone());
         }
@@ -3295,6 +3510,7 @@ impl Group {
                 adopt: Some(Box::new(r.clone())),
                 remote_id: Some(r.id),
                 slot: None,
+                created_by: r.created_by.clone(),
                 // A workspace this client has never adopted has no local id to
                 // hang a machine-tree lookup on. The tab column says so.
                 tabs: Vec::new(),
@@ -3323,19 +3539,25 @@ impl GroupRef {
 #[derive(Clone)]
 struct RowRef {
     id: WorkspaceId,
+    name: String,
     live: bool,
     adopt: Option<(RemoteTarget, Box<RemoteWorkspaceRow>)>,
+    created_by: Option<crate::core::machine::CreatedBy>,
+    can_manage_owner: bool,
 }
 
 impl RowRef {
     fn of(group: &Group, row: &Row) -> Self {
         Self {
             id: row.id,
+            name: row.name.clone(),
             live: row.live == Liveness::Alive,
             adopt: match (&group.target, &row.adopt) {
                 (Some(t), Some(r)) => Some((t.clone(), r.clone())),
                 _ => None,
             },
+            created_by: row.created_by.clone(),
+            can_manage_owner: false,
         }
     }
 }
@@ -3409,6 +3631,33 @@ fn row_menu(
                     },
                 ),
             ),
+    };
+    let menu = if !row.can_manage_owner {
+        menu
+    } else {
+        let created = row.created_by.clone();
+        let me = tty7_core::core::client_identity::current();
+        let mine = created
+            .as_ref()
+            .is_some_and(|owner| !owner.client_id.is_empty() && owner.client_id == me.id);
+        let a5 = app.clone();
+        let name = row.name.clone();
+        menu.separator().item(if mine {
+            PopupMenuItem::new(t(L10nKey::SwitcherReleaseWorkspace)).on_click(
+                move |_, _window, cx| {
+                    let _ = a5.update(cx, |this, cx| this.release_workspace(id, cx));
+                },
+            )
+        } else {
+            let created = created.clone();
+            let name = name.clone();
+            PopupMenuItem::new(t(L10nKey::SwitcherClaimWorkspace)).on_click(move |_, window, cx| {
+                let (created, name) = (created.clone(), name.clone());
+                let _ = a5.update(cx, |this, cx| {
+                    this.claim_workspace(id, created, &name, window, cx)
+                });
+            })
+        })
     };
     host_menu(menu, host, app)
 }
@@ -3823,6 +4072,7 @@ mod tests {
             adopt: None,
             remote_id: None,
             slot: None,
+            created_by: None,
             tabs,
         }
     }
@@ -3948,7 +4198,7 @@ mod tests {
             ]),
             named_group("devbox", vec![aged(row("remote", vec![]), 30)]),
         ];
-        let names: Vec<&str> = flatten(&groups, "")
+        let names: Vec<&str> = flatten(&groups, "", true, "")
             .into_iter()
             .map(|(g, r)| groups[g].rows[r].name.as_str())
             .collect();
@@ -3960,7 +4210,7 @@ mod tests {
         let mut here = aged(row("here", vec![]), 1);
         here.current = true;
         let groups = vec![group(vec![aged(row("busy", vec![]), 99), here])];
-        let first = flatten(&groups, "")[0];
+        let first = flatten(&groups, "", true, "")[0];
         assert_eq!(groups[first.0].rows[first.1].name, "here");
     }
 
@@ -3972,7 +4222,7 @@ mod tests {
         let mut here = aged(row("keen-crane", vec![tab("zsh", "/tmp/t7qa/fixture")]), 50);
         here.current = true;
         let groups = vec![group(vec![here, aged(row("qa", vec![]), 10)])];
-        let first = flatten(&groups, "qa")[0];
+        let first = flatten(&groups, "qa", true, "")[0];
         assert_eq!(groups[first.0].rows[first.1].name, "qa");
     }
 
@@ -3985,9 +4235,60 @@ mod tests {
             group(vec![row("local-notes", vec![])]),
             named_group("devbox", vec![row("api", vec![]), row("web", vec![])]),
         ];
-        let hits = flatten(&groups, "devbox");
+        let hits = flatten(&groups, "devbox", true, "");
         assert_eq!(hits.len(), 2);
         assert!(hits.iter().all(|&(g, _)| g == 1));
+    }
+
+    #[test]
+    fn the_default_view_hides_another_clients_workspace() {
+        let mut theirs = row("theirs", vec![]);
+        theirs.created_by = Some(crate::core::machine::CreatedBy {
+            client_id: "client-b".into(),
+            name: "Bob".into(),
+        });
+        let mut mine = row("mine", vec![]);
+        mine.created_by = Some(crate::core::machine::CreatedBy {
+            client_id: "client-a".into(),
+            name: "Alice".into(),
+        });
+        let unowned = row("unowned", vec![]);
+        let groups = vec![group(vec![theirs, mine, unowned])];
+
+        let names = |show_all| {
+            flatten(&groups, "", show_all, "client-a")
+                .into_iter()
+                .map(|(g, r)| groups[g].rows[r].name.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(false), vec!["mine", "unowned"]);
+        assert_eq!(names(true), vec!["mine", "theirs", "unowned"]);
+        assert_eq!(ownership_hidden(&groups, false, "client-a"), 1);
+        assert_eq!(ownership_hidden(&groups, true, "client-a"), 0);
+    }
+
+    #[test]
+    fn this_windows_workspace_is_never_hidden_by_ownership() {
+        let mut here = row("here", vec![]);
+        here.current = true;
+        here.created_by = Some(crate::core::machine::CreatedBy {
+            client_id: "client-b".into(),
+            name: "Bob".into(),
+        });
+        let groups = vec![group(vec![here])];
+        assert_eq!(flatten(&groups, "", false, "client-a").len(), 1);
+    }
+
+    #[test]
+    fn an_unknown_identity_shows_everything() {
+        let mut theirs = row("theirs", vec![]);
+        theirs.created_by = Some(crate::core::machine::CreatedBy {
+            client_id: "client-b".into(),
+            name: "Bob".into(),
+        });
+        let groups = vec![group(vec![theirs])];
+        assert_eq!(flatten(&groups, "", false, "").len(), 1);
+        assert_eq!(ownership_hidden(&groups, false, ""), 0);
     }
 
     #[test]
@@ -4165,12 +4466,14 @@ mod gpui_tests {
                             name: "doomed".into(),
                             panes: 0,
                             last_active: 0,
+                            created_by: None,
                         },
                         crate::ui::remote_connect::RemoteWorkspaceRow {
                             id: kept_ws,
                             name: "kept".into(),
                             panes: 0,
                             last_active: 0,
+                            created_by: None,
                         },
                     ],
                 },

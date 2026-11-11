@@ -159,8 +159,48 @@ impl Tty7App {
             },
         );
 
+        let (client_name_input, client) = match self.active_settings() {
+            Some(s) => (
+                s.client_name_input.clone(),
+                tty7_core::core::client_identity::current(),
+            ),
+            None => return div().into_any_element(),
+        };
+        let client_name = self.settings_text_input(&client_name_input, 260., false, cx);
+        let client_id = client.id.clone();
+        let copy_id = self.settings_button(
+            "settings-copy-client-id",
+            t(L10nKey::SettingsClientCopy),
+            cx,
+            move |_, window, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(client_id.clone()));
+                window.push_notification(t(L10nKey::SettingsClientCopied), cx);
+            },
+        );
+        let client_id_desc = format!("{} — {}", t(L10nKey::SettingsClientIdDesc), client.id);
+
         Self::settings_page([
             self.settings_group(None, None, first, cx),
+            self.settings_group(
+                Some(t(L10nKey::SettingsClient)),
+                None,
+                [
+                    self.settings_row(
+                        t(L10nKey::SettingsClientName),
+                        t(L10nKey::SettingsClientNameDesc),
+                        client_name.into_any_element(),
+                        cx,
+                    ),
+                    self.settings_row(
+                        t(L10nKey::SettingsClientId),
+                        client_id_desc,
+                        copy_id.into_any_element(),
+                        cx,
+                    ),
+                ]
+                .map(IntoElement::into_any_element),
+                cx,
+            ),
             self.settings_group(
                 Some(t(L10nKey::SettingsStartupRestore)),
                 None,

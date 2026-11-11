@@ -365,7 +365,9 @@ pub fn connect_blocking(
         )
     })?;
 
-    let hello = ControlHello::host_rpc(new_session_token(), client_hostname());
+    let identity = tty7_core::core::client_identity::current();
+    let hello = ControlHello::host_rpc(new_session_token(), client_hostname())
+        .with_client(identity.id, identity.name);
     let host = handshake(stream, &target.connection_key(), &hello).map_err(|e| {
         t_fmt(
             L10nKey::RemoteHostNotTty7,
@@ -436,6 +438,31 @@ fn new_session_token() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Who a workspace's `attachment` names, for the two questions the UI asks:
+/// "is this another client?" and "what do I call them?".
+///
+/// The client id decides when both sides have one. Peers that predate the id
+/// fall back to the hostname, which is also all an old server can send.
+pub(crate) fn holder_is_other(
+    attachment: &tty7_core::core::machine::Attachment,
+    my_client_id: &str,
+    my_hostname: &str,
+) -> bool {
+    if !attachment.client_id.is_empty() && !my_client_id.is_empty() {
+        return attachment.client_id != my_client_id;
+    }
+    !attachment.hostname.is_empty() && attachment.hostname != my_hostname
+}
+
+/// The display label for a holder: its client name, else its machine name,
+/// else the localized "unknown client" rather than an empty gap.
+pub(crate) fn holder_label(attachment: &tty7_core::core::machine::Attachment) -> String {
+    match attachment.display_name() {
+        "" => t(L10nKey::ClientUnknown).to_string(),
+        name => name.to_string(),
+    }
+}
+
 pub(crate) fn client_hostname() -> String {
     static NAME: OnceLock<String> = OnceLock::new();
     NAME.get_or_init(|| {
@@ -469,6 +496,7 @@ pub struct RemoteWorkspaceRow {
     pub name: String,
     pub panes: usize,
     pub last_active: u64,
+    pub created_by: Option<tty7_core::core::machine::CreatedBy>,
 }
 
 pub fn rows_from_machine(machine: &tty7_core::core::machine::Machine) -> Vec<RemoteWorkspaceRow> {
@@ -480,6 +508,7 @@ pub fn rows_from_machine(machine: &tty7_core::core::machine::Machine) -> Vec<Rem
             name: crate::ui::machine_mirror::display_name_of(ws, &machine.panes),
             panes: ws.tabs.iter().map(|t| t.root.pane_ids().len()).sum(),
             last_active: ws.last_active,
+            created_by: ws.created_by.clone(),
         })
         .collect();
     rows.sort_by_key(|row| std::cmp::Reverse(row.last_active));
@@ -495,8 +524,8 @@ pub struct HostLinks {
 impl Global for HostLinks {}
 
 impl HostLinks {
-    pub fn get(cx: &mut App, id: HostId) -> Option<Arc<RemoteHost>> {
-        cx.default_global::<HostLinks>().hosts.get(&id).cloned()
+    pub fn get(cx: &App, id: HostId) -> Option<Arc<RemoteHost>> {
+        cx.try_global::<HostLinks>()?.hosts.get(&id).cloned()
     }
 
     /// The home directory the host reported when the link came up — the only
@@ -1349,6 +1378,10 @@ mod tests {
                     name: Some("api".into()),
                     last_active: 100,
                     tabs: vec![Tab::leaf(1)],
+                    created_by: Some(tty7_core::core::machine::CreatedBy {
+                        client_id: "client-b".into(),
+                        name: "Bob".into(),
+                    }),
                     ..Default::default()
                 },
                 Workspace {
@@ -1376,6 +1409,14 @@ mod tests {
         );
         assert_eq!(rows[0].panes, 1);
         assert_eq!(rows[1].name, "api", "a user-set name wins");
+        assert_eq!(
+            rows[1]
+                .created_by
+                .as_ref()
+                .map(|owner| owner.client_id.as_str()),
+            Some("client-b"),
+            "the listing keeps every owner; filtering belongs to the view"
+        );
     }
 
     fn host(label: &str, detail: &str) -> HostChoice {

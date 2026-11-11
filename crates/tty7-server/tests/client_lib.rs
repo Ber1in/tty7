@@ -61,6 +61,12 @@ impl Daemon {
             .expect("control handshake with the spawned server")
     }
 
+    fn control_as(&self, name: &str, client_id: &str) -> ControlClient {
+        let hello = hello(name).with_client(client_id, format!("{name}'s client"));
+        ControlClient::connect_at(&self.control_endpoint(), &hello)
+            .expect("control handshake with the spawned server")
+    }
+
     fn await_ready(&self) {
         let deadline = Instant::now() + READY_WITHIN;
         loop {
@@ -77,6 +83,53 @@ impl Daemon {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+}
+
+#[test]
+fn a_workspace_remembers_the_client_that_created_and_claimed_it() {
+    let daemon = Daemon::start();
+    daemon.await_ready();
+
+    let writer = daemon.control_as("writer", "client-7");
+    assert!(
+        writer.hello().has_feature(feature::CLIENT_IDENTITY),
+        "the server must advertise ownership before a client sends it: {:?}",
+        writer.hello().features
+    );
+
+    let ws = match writer
+        .request(ControlRequest::WorkspaceCreate {
+            name: Some("owned".into()),
+            workspace: None,
+        })
+        .expect("create a workspace")
+    {
+        ReplyOk::WorkspaceTree(ws) => *ws,
+        other => panic!("expected WorkspaceTree, got {other:?}"),
+    };
+    assert_eq!(
+        ws.created_by.as_ref().map(|owner| owner.client_id.as_str()),
+        Some("client-7")
+    );
+
+    // A different client can claim it (the server does not treat this as
+    // authentication) and later release it.
+    let other = daemon.control_as("other", "client-8");
+    other
+        .request(ControlRequest::WorkspaceSetCreatedBy {
+            workspace: ws.id,
+            created_by: tty7_core::core::machine::CreatedByChange::Clear,
+        })
+        .expect("clear ownership");
+
+    let machine = match other
+        .request(ControlRequest::MachineGet)
+        .expect("read tree")
+    {
+        ReplyOk::MachineTree(machine) => *machine,
+        other => panic!("expected MachineTree, got {other:?}"),
+    };
+    assert_eq!(machine.workspaces[0].created_by, None);
 }
 
 impl Drop for Daemon {
