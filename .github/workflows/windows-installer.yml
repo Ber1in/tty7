@@ -1,0 +1,41 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: windows-installer-x86_64
+
+      - name: Build the GUI and updater
+        shell: bash
+        run: |
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          cargo build --release --locked --features updater \
+            --bin tty7-updater --target x86_64-pc-windows-msvc
+
+      - name: Package installer and portable zip
+        shell: pwsh
+        run: '& ./.github/scripts/bundle-windows.ps1 "x86_64-pc-windows-msvc" "x86_64"'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tty7-windows-x86_64
+          path: |
+            dist/*-setup.exe
+            dist/*.zip
+          if-no-files-found: error
