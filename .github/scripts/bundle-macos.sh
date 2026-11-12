@@ -30,6 +30,9 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
   echo "bundle-macos: could not read a version from Cargo.toml (got '$VERSION')" >&2
   exit 1
 fi
+# CFBundleVersion/CFBundleShortVersionString are period-separated integers;
+# a fork's `-ber1in.N` suffix belongs in the filename and About box, not here.
+VERSION_CORE="${VERSION%%[-+]*}"
 PACKAGE_UPDATE_ZIP="${TTY7_PACKAGE_UPDATE_ZIP:-1}"
 # A rebranded or local build sets its own name and id, binary dir and output
 # dir. TTY7_BUNDLE_ONLY stops after the .app, before the update zip and DMG.
@@ -79,8 +82,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key><string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
-    <key>CFBundleVersion</key><string>${VERSION}</string>
-    <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+    <key>CFBundleVersion</key><string>${VERSION_CORE}</string>
+    <key>CFBundleShortVersionString</key><string>${VERSION_CORE}</string>
     <key>CFBundleExecutable</key><string>tty7-app</string>
     <key>CFBundleIconFile</key><string>tty7</string>
     <key>CFBundlePackageType</key><string>APPL</string>

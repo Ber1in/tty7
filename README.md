@@ -10,9 +10,9 @@
 
 <br />
 
-[![CI](https://github.com/l0ng-ai/tty7/actions/workflows/ci.yml/badge.svg)](https://github.com/l0ng-ai/tty7/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/github/v/release/l0ng-ai/tty7?label=version&color=3FDD8C)](https://github.com/l0ng-ai/tty7/releases)
-[![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-blue)](https://github.com/l0ng-ai/tty7/releases)
+[![CI](https://github.com/Ber1in/tty7/actions/workflows/ci.yml/badge.svg)](https://github.com/Ber1in/tty7/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/release/Ber1in/tty7?label=version&color=3FDD8C)](https://github.com/Ber1in/tty7/releases)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-blue)](https://github.com/Ber1in/tty7/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/s3dethqz2V)
 
@@ -36,13 +36,17 @@ only adds its own changes on top.
 | | |
 |---|---|
 | **Upstream source** | [github.com/l0ng-ai/tty7](https://github.com/l0ng-ai/tty7) |
-| **Downloads & releases** | [upstream releases](https://github.com/l0ng-ai/tty7/releases) — no builds are published from this fork |
+| **Downloads & releases** | [this fork’s releases](https://github.com/Ber1in/tty7/releases) |
 | **Documentation** | [`docs/`](docs/) here is upstream's, kept in sync |
 | **Issues, Discord, community** | go upstream, unless the problem is specific to a change made in this fork |
 
 Everything below describes tty7 as upstream ships it. The badges above point at
-upstream CI and releases, not at this fork. Local changes here may be ahead of,
-behind, or absent from upstream, and are not endorsed by or merged back into it.
+this fork’s CI and releases. Local changes here may be ahead of, behind, or absent
+from upstream, and are not endorsed by or merged back into it.
+
+Fork versions use `<upstream-patch>-ber1in.<n>` (for example
+`26.10.1-ber1in.1`), so the base they were built from and the fork revision are
+both visible. The in-app updater follows this fork’s releases.
 
 To sync with upstream:
 
@@ -65,7 +69,7 @@ below follows from that.
 
 ## Install
 
-Native builds for macOS, Windows, and Linux on [**Releases**](https://github.com/l0ng-ai/tty7/releases):
+Native builds for macOS, Windows, and Linux on [**Releases**](https://github.com/Ber1in/tty7/releases):
 
 | | | |
 |---|---|---|

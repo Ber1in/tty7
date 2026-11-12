@@ -1751,9 +1751,9 @@ impl Tty7App {
                 .child(t(L10nKey::SettingsAboutDesc1))
                 .child(
                     Link::new("about-github")
-                        .href("https://github.com/l0ng-ai/tty7")
+                        .href("https://github.com/Ber1in/tty7")
                         .text_color(tk.k6)
-                        .child("github.com/l0ng-ai/tty7"),
+                        .child("github.com/Ber1in/tty7"),
                 )
                 .into_any_element(),
         );

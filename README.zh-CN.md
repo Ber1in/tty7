@@ -10,9 +10,9 @@
 
 <br />
 
-[![CI](https://github.com/l0ng-ai/tty7/actions/workflows/ci.yml/badge.svg)](https://github.com/l0ng-ai/tty7/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/github/v/release/l0ng-ai/tty7?label=version&color=3FDD8C)](https://github.com/l0ng-ai/tty7/releases)
-[![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-blue)](https://github.com/l0ng-ai/tty7/releases)
+[![CI](https://github.com/Ber1in/tty7/actions/workflows/ci.yml/badge.svg)](https://github.com/Ber1in/tty7/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/release/Ber1in/tty7?label=version&color=3FDD8C)](https://github.com/Ber1in/tty7/releases)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-blue)](https://github.com/Ber1in/tty7/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-%E5%8A%A0%E5%85%A5%E8%AE%A8%E8%AE%BA-5865F2?logo=discord&logoColor=white)](https://discord.gg/s3dethqz2V)
 
@@ -35,12 +35,16 @@ l0ng-ai/tty7。tty7 本身完全是上游作者的成果，这个 fork 只是在
 | | |
 |---|---|
 | **上游源码** | [github.com/l0ng-ai/tty7](https://github.com/l0ng-ai/tty7) |
-| **下载与发布** | [上游 Releases](https://github.com/l0ng-ai/tty7/releases)，本 fork 不发布构建产物 |
+| **下载与发布** | [本 fork 的 Releases](https://github.com/Ber1in/tty7/releases) |
 | **文档** | 这里的 [`docs/`](docs/) 来自上游，随上游同步 |
 | **Issue、Discord、社区** | 请走上游，除非问题只由本 fork 的改动引起 |
 
-下文描述的是上游版本的 tty7。上方徽章指向的是上游的 CI 和发布，而不是本 fork。
+下文描述的是上游版本的 tty7。上方徽章指向的是本 fork 的 CI 和发布。
 本 fork 的本地改动可能领先、落后或完全不存在于上游，也不代表上游认可或被合并回上游。
+
+本 fork 的版本号格式为 `<上游 patch>-ber1in.<序号>`（例如
+`26.10.1-ber1in.1`），既能看出基于哪个上游版本，也能看出 fork 的第几次修订。
+应用内更新检查跟随本 fork 的 Releases。
 
 与上游同步：
 
@@ -62,7 +66,7 @@ shell 和窗格由后台常驻的 server 持有，而不是窗口。下面这些
 
 ## 安装
 
-macOS、Windows、Linux 的原生构建都在 [**Releases**](https://github.com/l0ng-ai/tty7/releases)：
+macOS、Windows、Linux 的原生构建都在 [**Releases**](https://github.com/Ber1in/tty7/releases)：
 
 | | | |
 |---|---|---|

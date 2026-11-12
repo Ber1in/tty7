@@ -14,7 +14,7 @@ use tty7_core::daemon::install::AssetFetcher as _;
 use crate::core::config::{Config, UpdateChannel};
 use crate::ui::i18n::{L10nKey, t, t_fmt};
 
-const REPO: &str = "l0ng-ai/tty7";
+const REPO: &str = "Ber1in/tty7";
 
 /// The rolling prerelease the Nightly channel follows. Force-moved to a new
 /// commit every night, which is exactly why it cannot double as a version.
@@ -24,13 +24,13 @@ const NIGHTLY_TAG: &str = "nightly";
 /// inferred. See `resolve_version`.
 const NIGHTLY_MANIFEST: &str = "nightly.json";
 
-pub const RELEASES_URL: &str = "https://github.com/l0ng-ai/tty7/releases/latest";
+pub const RELEASES_URL: &str = "https://github.com/Ber1in/tty7/releases/latest";
 
 /// The nightly release's own page. Unlike Stable's, this URL is stable across
 /// nights — the tag stays put even as the commit under it moves. Spelled out
 /// rather than built from `NIGHTLY_TAG`, which `concat!` cannot take; the tail
 /// is asserted against it in `each_channel_reads_its_own_feed` instead.
-pub const NIGHTLY_RELEASE_URL: &str = "https://github.com/l0ng-ai/tty7/releases/tag/nightly";
+pub const NIGHTLY_RELEASE_URL: &str = "https://github.com/Ber1in/tty7/releases/tag/nightly";
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 
