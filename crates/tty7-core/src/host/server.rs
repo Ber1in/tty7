@@ -79,6 +79,7 @@ struct Live {
     conn: u64,
     token: String,
     hostname: String,
+    client_id: String,
     sink: Arc<Sink>,
     shutdown: Arc<dyn LinkShutdown>,
     dedicated: bool,
@@ -86,6 +87,7 @@ struct Live {
 
 struct Evicted {
     hostname: String,
+    client_id: String,
     sink: Arc<Sink>,
     shutdown: Arc<dyn LinkShutdown>,
     dedicated: bool,
@@ -165,12 +167,15 @@ impl AttachRegistry {
         let evicted = match live.iter().position(|l| l.workspace == workspace) {
             Some(i) if live[i].conn == conn => {
                 live[i].token = holder.token.clone();
+                live[i].hostname = holder.hostname.clone();
+                live[i].client_id = holder.client_id.clone();
                 None
             }
             Some(i) => {
                 let old = live.remove(i);
                 Some(Evicted {
                     hostname: old.hostname,
+                    client_id: old.client_id,
                     sink: old.sink,
                     shutdown: old.shutdown,
                     dedicated: old.dedicated,
@@ -184,6 +189,7 @@ impl AttachRegistry {
                 conn,
                 token: holder.token.clone(),
                 hostname: holder.hostname.clone(),
+                client_id: holder.client_id.clone(),
                 sink: Arc::clone(&holder.sink),
                 shutdown: Arc::clone(&holder.shutdown),
                 dedicated,
@@ -225,6 +231,8 @@ impl AttachRegistry {
 struct Holder {
     token: String,
     hostname: String,
+    client_id: String,
+    client_name: String,
     sink: Arc<Sink>,
     shutdown: Arc<dyn LinkShutdown>,
 }
@@ -307,6 +315,8 @@ where
         holder: Holder {
             token: hello.client_token.clone(),
             hostname: hello.client_hostname.clone(),
+            client_id: hello.client_id.clone(),
+            client_name: hello.client_name.clone(),
             sink: Arc::clone(&sink),
             shutdown: Arc::clone(&shutdown),
         },
@@ -396,6 +406,9 @@ fn handshake<R: Read>(
     }
     if services.machine.is_some() {
         features.push(feature::MACHINE_TREE.to_string());
+        // Ownership lives on the workspace records in that tree, so the two
+        // capabilities are only ever offered together.
+        features.push(feature::CLIENT_IDENTITY.to_string());
     }
     // A sleeping tab is a mark in the tree *and* stopped panes; a peer that can
     // do only half of that would leave a tab asleep with its shells running,
@@ -453,7 +466,11 @@ fn attach_workspace(
     let tree_id: Option<crate::core::session::WorkspaceId> = workspace.parse().ok();
     let (displaced, evicted) = {
         let _handover = conn.attachments.handover();
-        let attachment = Attachment::new(conn.holder.token.clone(), conn.holder.hostname.clone());
+        let attachment = Attachment::new(conn.holder.token.clone(), conn.holder.hostname.clone())
+            .with_client(
+                conn.holder.client_id.clone(),
+                conn.holder.client_name.clone(),
+            );
         let displaced = match (&conn.machine, tree_id) {
             (Some(machine), Some(id)) => machine.attach(id, attachment),
             _ => None,
@@ -466,13 +483,20 @@ fn attach_workspace(
 
     if let Some(evicted) = evicted {
         log::info!(
-            "workspace {workspace} taken over by {} from {}",
+            "workspace {workspace} taken over by {} (client {}) from {} (client {})",
             conn.holder.hostname,
-            evicted.hostname
+            conn.holder.client_id,
+            evicted.hostname,
+            evicted.client_id
         );
+        let by = if conn.holder.client_name.is_empty() {
+            conn.holder.hostname.clone()
+        } else {
+            conn.holder.client_name.clone()
+        };
         let notice = ControlEvent::Preempted {
             workspace: workspace.to_string(),
-            by: conn.holder.hostname.clone(),
+            by,
         };
         if let Err(e) = evicted.sink.send(&ControlServerMsg::Event(notice)) {
             log::debug!("could not tell the displaced session about {workspace}: {e}");
@@ -484,7 +508,7 @@ fn attach_workspace(
 
     Ok(displaced
         .filter(|a| a.token != conn.holder.token)
-        .map(|a| a.hostname))
+        .map(|a| a.display_name().to_string()))
 }
 
 fn detach_workspace(conn: &Arc<Conn>, workspace: &str) -> io::Result<bool> {
@@ -750,17 +774,33 @@ fn run_request(
             ReplyOk::WorkspaceTree(Box::new(conn.machine()?.workspace(workspace)?)),
             Vec::new(),
         ),
-        ControlRequest::WorkspaceCreate { name, workspace } => (
-            ReplyOk::WorkspaceTree(Box::new(conn.machine()?.workspace_create(
-                workspace,
-                name,
-                conn.machine_origin,
-            )?)),
-            Vec::new(),
-        ),
+        ControlRequest::WorkspaceCreate { name, workspace } => {
+            let created_by =
+                (!conn.holder.client_id.is_empty()).then(|| crate::core::machine::CreatedBy {
+                    client_id: conn.holder.client_id.clone(),
+                    name: conn.holder.client_name.clone(),
+                });
+            (
+                ReplyOk::WorkspaceTree(Box::new(conn.machine()?.workspace_create_as(
+                    workspace,
+                    name,
+                    conn.machine_origin,
+                    created_by,
+                )?)),
+                Vec::new(),
+            )
+        }
         ControlRequest::WorkspaceRename { workspace, name } => {
             conn.machine()?
                 .workspace_rename(workspace, name, conn.machine_origin)?;
+            (ReplyOk::Unit, Vec::new())
+        }
+        ControlRequest::WorkspaceSetCreatedBy {
+            workspace,
+            created_by,
+        } => {
+            conn.machine()?
+                .workspace_set_created_by(workspace, created_by, conn.machine_origin)?;
             (ReplyOk::Unit, Vec::new())
         }
         ControlRequest::WorkspaceRemove { workspace } => {
@@ -2549,6 +2589,8 @@ mod tests {
             workspace: Some(workspace.to_string()),
             client_token: token.to_string(),
             client_hostname: hostname.to_string(),
+            client_id: String::new(),
+            client_name: String::new(),
             gui: false,
         }
     }

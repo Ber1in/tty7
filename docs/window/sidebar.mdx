@@ -122,3 +122,30 @@ filter both, <kbd>⇥</kbd> to cross into the tab column, <kbd>⏎</kbd> to open
 
 From here you can also rename a workspace, open one in a new window, stop one,
 or connect to a machine you have a profile for.
+
+## Workspace ownership
+
+Each installation gets a client identity, kept in its config directory
+(`client.json`) and shown under **Settings → This client**. Workspaces record
+the client that created or claimed them, and the switcher uses that label:
+
+- By default the switcher lists **your workspaces and unowned ones**. The
+  `All (N)` pill in its search bar shows every workspace on every connected
+  machine, including other clients'; `Only mine` returns.
+- A row says `mine`, `unowned`, or `by <client name>`. Two machines with the
+  same hostname are still told apart by their client IDs.
+- **Claim as mine** and **Release to unowned** live on a workspace's right-click
+  menu. Claiming a workspace that belongs to another client asks first.
+- Opening a workspace another client is using also asks first; taking it over
+  disconnects their window but does not change who owns it.
+
+Ownership is a label, **not access control**. Everyone who can connect to the
+same Unix account — or use the same config directory — can still read, attach
+to, and take over each other's workspaces. To separate people, give them
+separate accounts or separate `TTY7_CONFIG_DIR` values.
+
+The identity belongs to the config directory, not to the computer or the person
+using it. Cloned images and synced configs share an ID (tty7 does not detect
+this), and deleting the config directory mints a new one, so older workspaces
+show as unowned or as another client's. They remain reachable through **All**
+and can be claimed again.

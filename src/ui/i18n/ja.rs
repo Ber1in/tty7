@@ -322,6 +322,17 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsCursorBlinkDesc => {
             "ターミナルがフォーカスされている間、カーソルを点滅させる"
         }
+        L10nKey::SettingsClient => "このクライアント",
+        L10nKey::SettingsClientName => "表示名",
+        L10nKey::SettingsClientNameDesc => "ワークスペース一覧と引き継ぎの確認に表示されます。",
+        L10nKey::SettingsClientNamePlaceholder => "例: Alice のノート PC",
+        L10nKey::SettingsClientId => "クライアント ID",
+        L10nKey::SettingsClientIdDesc => {
+            "このインストールを識別するもので、パスワードやアクセス制御ではありません。"
+        }
+        L10nKey::SettingsClientCopy => "ID をコピー",
+        L10nKey::SettingsClientCopied => "クライアント ID をコピーしました",
+        L10nKey::SettingsSearchClientKeywords => "クライアント 識別 デバイス 名前 インストール",
         L10nKey::SettingsLanguage => "言語",
         L10nKey::SettingsLanguageDesc => "tty7 の表示言語を選択します",
         L10nKey::SettingsLanguageEnglish => "English",
@@ -2166,7 +2177,34 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::SwitcherStatusConnectFailed => "接続できませんでした",
         L10nKey::SwitcherStatusNotConnected => "未接続",
         L10nKey::SwitcherStatusReconnecting => "再接続中…",
+        L10nKey::SwitcherOnlyMine => "自分のみ",
+        L10nKey::SwitcherAll => "すべて",
+        L10nKey::SwitcherAllCountHidden => "すべて ({total}) · 非表示 {hidden}",
+        L10nKey::SwitcherAllCount => "すべて ({n})",
+        L10nKey::SwitcherNoOwned => "このクライアントのワークスペースはありません",
+        L10nKey::SwitcherUnowned => "未割り当て",
+        L10nKey::SwitcherOwnedBy => "{name} の所有",
+        L10nKey::SwitcherMine => "自分",
+        L10nKey::SwitcherClaimWorkspace => "自分のものにする",
+        L10nKey::SwitcherReleaseWorkspace => "未割り当てに戻す",
+        L10nKey::SwitcherClaimTitle => "「{name}」を自分のものにしますか？",
+        L10nKey::SwitcherClaimOtherBody => {
+            "現在は {owner} の所有です。変更は全員に表示されますが、アクセス権は付与されません。"
+        }
+        L10nKey::SwitcherClaimConfirm => "引き継ぐ",
+        L10nKey::SwitcherTakeoverTitle => "「{name}」を引き継ぎますか？",
+        L10nKey::SwitcherTakeoverBody => {
+            "現在 {owner} がこのワークスペースを使用しています。引き継ぐと相手のウィンドウは切断されます。所有権は変わりません。"
+        }
+        L10nKey::SwitcherTakeoverConfirm => "引き継ぐ",
+        L10nKey::RestoreSkippedOtherOwner => {
+            "「{name}」の復元をスキップしました: {owner} の所有です。"
+        }
         L10nKey::SwitcherStatusTakenOver => "他のクライアントが使用中",
+        L10nKey::ClientIdentityNotPersisted => {
+            "このクライアントは識別情報を保存できませんでした。ワークスペースの所有情報は再起動後に失われます。"
+        }
+        L10nKey::ClientUnknown => "不明なクライアント",
         L10nKey::SettingsFontDefault => "デフォルト（メインに合わせる）",
         L10nKey::SettingsUiFontDefault => "デフォルト（システム UI フォント）",
         L10nKey::ForwardDescriptionPlaceholder => "用途",

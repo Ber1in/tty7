@@ -351,9 +351,9 @@ pub(crate) const TILE_GLYPH_LINE: f32 = 16.;
 pub(crate) const TILE_PAD: f32 = (TILE_SIZE - TILE_GLYPH) / 2.;
 pub(crate) const TILE_PAD_SM: f32 = (TILE_SIZE_SM - TILE_GLYPH_SM) / 2.;
 
-const DOCS_URL: &str = "https://github.com/l0ng-ai/tty7#readme";
+const DOCS_URL: &str = "https://github.com/Ber1in/tty7#readme";
 const DISCORD_URL: &str = "https://discord.gg/s3dethqz2V";
-const ISSUES_URL: &str = "https://github.com/l0ng-ai/tty7/issues/new";
+const ISSUES_URL: &str = "https://github.com/Ber1in/tty7/issues/new";
 
 pub(crate) const CONTENT_INSET: f32 = 12.;
 
@@ -7544,6 +7544,7 @@ impl Tty7App {
         let focus_handle = cx.focus_handle();
         let mut subs = Vec::new();
         let font_names = std::rc::Rc::new(Self::settings_font_names(cx));
+        let client_name_input = self.build_client_name_input(&mut subs, window, cx);
         let (shell_program_input, shell_args_input, wd_path_input) =
             self.build_shell_inputs(&mut subs, window, cx);
         let link_file_command_input = self.build_link_file_command_input(&mut subs, window, cx);
@@ -7631,6 +7632,7 @@ impl Tty7App {
             search_anchor,
             reveal_first_hit: Cell::new(false),
             font_names,
+            client_name_input,
             shell_program_input,
             shell_args_input,
             wd_path_input,
@@ -7751,6 +7753,34 @@ impl Tty7App {
             });
         }
         cx.notify();
+    }
+
+    fn build_client_name_input(
+        &mut self,
+        subs: &mut Vec<Subscription>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
+        let identity = tty7_core::core::client_identity::current();
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t(L10nKey::SettingsClientNamePlaceholder))
+                .default_value(identity.name)
+        });
+        subs.push(
+            cx.subscribe_in(&input, window, |_this, input, ev, _window, cx| {
+                if matches!(ev, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                    let name = input.read(cx).value().trim().to_string();
+                    if !name.is_empty()
+                        && let Err(e) = tty7_core::core::client_identity::set_name(name)
+                    {
+                        log::warn!("could not save the client name: {e}");
+                    }
+                    cx.notify();
+                }
+            }),
+        );
+        input
     }
 
     fn build_shell_inputs(

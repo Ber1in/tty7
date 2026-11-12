@@ -11528,7 +11528,7 @@ dependencies = [
 
 [[package]]
 name = "tty7"
-version = "26.10.0"
+version = "26.10.1-ber1in.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -11582,7 +11582,7 @@ dependencies = [
 
 [[package]]
 name = "tty7-cli"
-version = "26.10.0"
+version = "26.10.1-ber1in.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -11597,7 +11597,7 @@ dependencies = [
 
 [[package]]
 name = "tty7-core"
-version = "26.10.0"
+version = "26.10.1-ber1in.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -11637,7 +11637,7 @@ dependencies = [
 
 [[package]]
 name = "tty7-gateway"
-version = "26.10.0"
+version = "26.10.1-ber1in.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -11663,7 +11663,7 @@ dependencies = [
 
 [[package]]
 name = "tty7-mobile-client"
-version = "26.10.0"
+version = "26.10.1-ber1in.1"
 dependencies = [
  "anyhow",
  "iroh",
@@ -11676,7 +11676,7 @@ dependencies = [
 
 [[package]]
 name = "tty7-mobile-proto"
-version = "26.10.0"
+version = "26.10.1-ber1in.1"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -11686,7 +11686,7 @@ dependencies = [
 
 [[package]]
 name = "tty7-server"
-version = "26.10.0"
+version = "26.10.1-ber1in.1"
 dependencies = [
  "libc",
  "tempfile",

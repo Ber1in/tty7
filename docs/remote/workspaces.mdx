@@ -137,3 +137,15 @@ the local server *already* holds — it will not dial a fresh connection, and it
 says so rather than guessing. Connect from the switcher first.
 
 [CLI overview →](/cli/overview)
+
+## Ownership across clients
+
+A remote machine can have several tty7 clients attached at once. Workspaces now
+remember which client created or claimed them, and each client's switcher hides
+the others' by default; the **All** pill shows them. Claim, release, and the
+takeover prompt work the same way as on a local machine.
+
+This is a convenience label, not a permission. Clients that share the same Unix
+account on the remote machine — and especially clients that share one config
+directory — can still see and attach to every workspace. Use separate accounts
+when the people using the machine do not trust each other.

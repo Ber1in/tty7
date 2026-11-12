@@ -303,6 +303,17 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         L10nKey::SettingsPromptCursorShapeDesc => "The cursor at the shell prompt.",
         L10nKey::SettingsCursorBlink => "Cursor blink",
         L10nKey::SettingsCursorBlinkDesc => "Pulse the cursor while the terminal is focused.",
+        L10nKey::SettingsClient => "This client",
+        L10nKey::SettingsClientName => "Display name",
+        L10nKey::SettingsClientNameDesc => "Shown in workspace lists and takeover prompts.",
+        L10nKey::SettingsClientNamePlaceholder => "e.g. Alice's laptop",
+        L10nKey::SettingsClientId => "Client ID",
+        L10nKey::SettingsClientIdDesc => {
+            "Identifies this installation; not a password or access control."
+        }
+        L10nKey::SettingsClientCopy => "Copy ID",
+        L10nKey::SettingsClientCopied => "Client ID copied",
+        L10nKey::SettingsSearchClientKeywords => "client identity device name install",
         L10nKey::SettingsLanguage => "Language",
         L10nKey::SettingsLanguageDesc => "Choose the language used for the tty7 interface.",
         L10nKey::SettingsLanguageEnglish => "English",
@@ -2098,7 +2109,32 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         L10nKey::SwitcherStatusConnectFailed => "couldn't connect",
         L10nKey::SwitcherStatusNotConnected => "not connected",
         L10nKey::SwitcherStatusReconnecting => "reconnecting…",
+        L10nKey::SwitcherOnlyMine => "Only mine",
+        L10nKey::SwitcherAll => "All",
+        L10nKey::SwitcherAllCountHidden => "All ({total}) · {hidden} hidden",
+        L10nKey::SwitcherAllCount => "All ({n})",
+        L10nKey::SwitcherNoOwned => "No workspaces belong to this client",
+        L10nKey::SwitcherUnowned => "unowned",
+        L10nKey::SwitcherOwnedBy => "by {name}",
+        L10nKey::SwitcherMine => "mine",
+        L10nKey::SwitcherClaimWorkspace => "Claim as mine",
+        L10nKey::SwitcherReleaseWorkspace => "Release to unowned",
+        L10nKey::SwitcherClaimTitle => "Claim \"{name}\"?",
+        L10nKey::SwitcherClaimOtherBody => {
+            "It currently belongs to {owner}. Claiming changes the label for everyone; it does not grant access."
+        }
+        L10nKey::SwitcherClaimConfirm => "Claim",
+        L10nKey::SwitcherTakeoverTitle => "Take over \"{name}\"?",
+        L10nKey::SwitcherTakeoverBody => {
+            "{owner} is using this workspace right now. Taking it over will disconnect their window. Ownership does not change."
+        }
+        L10nKey::SwitcherTakeoverConfirm => "Take over",
+        L10nKey::RestoreSkippedOtherOwner => "Skipped restoring \"{name}\": it belongs to {owner}.",
         L10nKey::SwitcherStatusTakenOver => "taken over",
+        L10nKey::ClientIdentityNotPersisted => {
+            "This client could not save its identity; workspace ownership will not survive a restart."
+        }
+        L10nKey::ClientUnknown => "unknown client",
         L10nKey::SettingsFontDefault => "Default (match primary)",
         L10nKey::SettingsUiFontDefault => "Default (system UI font)",
         L10nKey::ForwardDescriptionPlaceholder => "what it's for",

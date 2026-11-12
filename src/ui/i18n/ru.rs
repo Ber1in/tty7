@@ -314,6 +314,19 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsPromptCursorShapeDesc => "Курсор в приглашении оболочки.",
         L10nKey::SettingsCursorBlink => "Мигание курсора",
         L10nKey::SettingsCursorBlinkDesc => "Мигать курсором, когда терминал в фокусе.",
+        L10nKey::SettingsClient => "Этот клиент",
+        L10nKey::SettingsClientName => "Отображаемое имя",
+        L10nKey::SettingsClientNameDesc => {
+            "Показывается в списках рабочих областей и при передаче управления."
+        }
+        L10nKey::SettingsClientNamePlaceholder => "напр. ноутбук Алисы",
+        L10nKey::SettingsClientId => "ID клиента",
+        L10nKey::SettingsClientIdDesc => {
+            "Идентифицирует установку; это не пароль и не контроль доступа."
+        }
+        L10nKey::SettingsClientCopy => "Копировать ID",
+        L10nKey::SettingsClientCopied => "ID клиента скопирован",
+        L10nKey::SettingsSearchClientKeywords => "клиент идентификатор устройство имя установка",
         L10nKey::SettingsLanguage => "Язык",
         L10nKey::SettingsLanguageDesc => "Язык интерфейса tty7.",
         L10nKey::SettingsLanguageEnglish => "English",
@@ -2314,7 +2327,34 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::SwitcherStatusConnectFailed => "не удалось подключиться",
         L10nKey::SwitcherStatusNotConnected => "нет соединения",
         L10nKey::SwitcherStatusReconnecting => "переподключение…",
+        L10nKey::SwitcherOnlyMine => "Только мои",
+        L10nKey::SwitcherAll => "Все",
+        L10nKey::SwitcherAllCountHidden => "Все ({total}) · скрыто {hidden}",
+        L10nKey::SwitcherAllCount => "Все ({n})",
+        L10nKey::SwitcherNoOwned => "Нет рабочих областей этого клиента",
+        L10nKey::SwitcherUnowned => "без владельца",
+        L10nKey::SwitcherOwnedBy => "владелец: {name}",
+        L10nKey::SwitcherMine => "моя",
+        L10nKey::SwitcherClaimWorkspace => "Назначить своей",
+        L10nKey::SwitcherReleaseWorkspace => "Сделать бесхозной",
+        L10nKey::SwitcherClaimTitle => "Назначить «{name}» своей?",
+        L10nKey::SwitcherClaimOtherBody => {
+            "Сейчас владелец — {owner}. Метка изменится для всех, но доступа это не даёт."
+        }
+        L10nKey::SwitcherClaimConfirm => "Назначить",
+        L10nKey::SwitcherTakeoverTitle => "Перехватить «{name}»?",
+        L10nKey::SwitcherTakeoverBody => {
+            "Сейчас эту рабочую область использует {owner}. Перехват отключит его окно. Владелец не изменится."
+        }
+        L10nKey::SwitcherTakeoverConfirm => "Перехватить",
+        L10nKey::RestoreSkippedOtherOwner => {
+            "Восстановление «{name}» пропущено: владелец — {owner}."
+        }
         L10nKey::SwitcherStatusTakenOver => "управление передано",
+        L10nKey::ClientIdentityNotPersisted => {
+            "Не удалось сохранить идентификатор клиента; владение рабочими областями не переживёт перезапуск."
+        }
+        L10nKey::ClientUnknown => "неизвестный клиент",
         L10nKey::SettingsFontDefault => "По умолчанию (как основной)",
         L10nKey::SettingsUiFontDefault => "По умолчанию (системный)",
         L10nKey::ForwardDescriptionPlaceholder => "для чего это",

@@ -295,7 +295,7 @@ fn end_unsent_retirements(cx: &mut App, retired: &mut Vec<Retiring>, dropped: &[
     }
 }
 
-fn tree_workspace_id(cx: &App, client_ws: WorkspaceId) -> WorkspaceId {
+pub(crate) fn tree_workspace_id(cx: &App, client_ws: WorkspaceId) -> WorkspaceId {
     WorkspaceStore::all(cx)
         .get(client_ws)
         .and_then(|w| w.host.as_ref())
@@ -572,6 +572,10 @@ pub(crate) struct WsMirror {
     pub tabs: Vec<TreeTab>,
     pub active: Option<TabId>,
     pub groups: WorkspaceGroups,
+    /// Carried through a pull so the window's own mirror labels a freshly
+    /// created workspace correctly even though the server leaves its author
+    /// out of the `WorkspaceCreated` delta.
+    pub created_by: Option<tty7_core::core::machine::CreatedBy>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1409,7 +1413,11 @@ pub(crate) fn sync_window(app: &Tty7App, cx: &mut App) {
             let remembered: Vec<TabId> = sent.iter().map(|r| r.tab).collect();
             state.retired.extend(sent);
             if !ops.is_empty() {
-                let (tabs, active) = (mirror.tabs.clone(), mirror.active);
+                let (tabs, active, created_by) = (
+                    mirror.tabs.clone(),
+                    mirror.active,
+                    mirror.created_by.clone(),
+                );
                 state.queue.extend(ops);
                 let host = WorkspaceStore::host_of(cx, client_ws);
                 // Before the tabs are replaced, while the mirror still has the
@@ -1418,7 +1426,7 @@ pub(crate) fn sync_window(app: &Tty7App, cx: &mut App) {
                     cx, host, machine_ws, remembered,
                 );
                 crate::ui::machine_mirror::MachineMirrors::note_synced_workspace(
-                    cx, host, machine_ws, tabs, active,
+                    cx, host, machine_ws, tabs, active, created_by,
                 );
                 let open: Vec<u64> = app
                     .tabs
@@ -1876,6 +1884,7 @@ fn primed(ws: Workspace, arrival: Arrival) -> (WsMirror, Option<String>, Arrival
             tabs: ws.tabs,
             active: ws.active_tab,
             groups: ws.groups,
+            created_by: ws.created_by,
         },
         ws.name,
         arrival,
@@ -1902,7 +1911,13 @@ fn finish_prime(
             // The machine answered, which is the only thing the retry was
             // waiting to find out, so the next failure starts its backoff over.
             state.rehydrate_attempts = 0;
-            let landed = (mirror.tabs.clone(), mirror.active, name, arrival);
+            let landed = (
+                mirror.tabs.clone(),
+                mirror.active,
+                mirror.created_by.clone(),
+                name,
+                arrival,
+            );
             state.sync = SyncPhase::Primed(mirror);
             landed
         }
@@ -1919,11 +1934,11 @@ fn finish_prime(
     let host = WorkspaceStore::host_of(cx, client_ws);
     let machine_ws = tree_workspace_id(cx, client_ws);
     crate::ui::machine_mirror::MachineMirrors::note_synced_workspace(
-        cx, host, machine_ws, landed.0, landed.1,
+        cx, host, machine_ws, landed.0, landed.1, landed.2,
     );
     // The pull above is the only place this window will hear the workspace's
     // name — it is left out of the deltas its own create raises (#604).
-    let name = settle_chosen_name(cx, client_ws, landed.2, landed.3);
+    let name = settle_chosen_name(cx, client_ws, landed.3, landed.4);
     crate::ui::machine_mirror::MachineMirrors::note_workspace_name(cx, host, machine_ws, name);
     if !was_dirty {
         return;
@@ -2705,6 +2720,7 @@ fn layout_of(
         tabs: ws.tabs.clone(),
         active: ws.active_tab,
         groups: ws.groups.clone(),
+        created_by: ws.created_by.clone(),
     };
     let session = session_from_tree(ws, &machine.panes);
     Ok((machine, mirror, session))
@@ -2765,17 +2781,13 @@ fn settle_hydration(
     // the takeover is noticed, would resize them under it. A window restored or
     // reconnected onto one opens taken over instead, with Take Back.
     if host.is_local() {
-        let holder = machine
+        let (holder, owner) = machine
             .workspaces
             .iter()
             .find(|w| w.id == machine_ws)
-            .and_then(|w| w.attachment.as_ref())
-            .map(|a| a.hostname.clone());
-        if !crate::ui::local_link::LocalLink::hydration_may_proceed(
-            cx,
-            client_ws,
-            holder.as_deref(),
-        ) {
+            .map(|w| (w.attachment.as_ref(), w.created_by.as_ref()))
+            .unwrap_or((None, None));
+        if !crate::ui::local_link::LocalLink::hydration_may_proceed(cx, client_ws, holder, owner) {
             crate::ui::machine_mirror::MachineMirrors::install(cx, host, machine);
             // Unprimed and not priming: the window speaks for nothing until a
             // Take Back rebuilds it from the tree.
@@ -3057,10 +3069,15 @@ fn apply_to_mirror(mirror: &mut WsMirror, delta: &LayoutDelta) -> bool {
         // `on_layout_delta` hands it to `on_workspace_deleted` and returns —
         // and is listed only so a new delta cannot join this arm by accident.
         LayoutDelta::WorkspaceCreated { .. }
-        | LayoutDelta::WorkspaceRenamed { .. }
         | LayoutDelta::WorkspaceTouched { .. }
         | LayoutDelta::WorkspaceDeleted
         | LayoutDelta::PaneFacts { .. } => true,
+        LayoutDelta::WorkspaceRenamed { created_by, .. } => {
+            if let Some(change) = created_by {
+                mirror.created_by = change.apply();
+            }
+            true
+        }
         LayoutDelta::ActiveTabChanged { tab } => {
             mirror.active = Some(*tab);
             true
